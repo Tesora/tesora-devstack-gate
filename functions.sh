@@ -172,7 +172,7 @@ function git_fetch_at_ref {
                 mapped_project="tesora/tesora-devstack-gate"
                 ;;
             *)
-                mapped_project=project
+                mapped_project=$project
         esac
 
         git fetch $ZUUL_URL/$mapped_project $ref

@@ -152,8 +152,30 @@ function indent {
 function git_fetch_at_ref {
     local project=$1
     local ref=$2
+    local mapped_project=$project
+
     if [ "$ref" != "" ]; then
-        git fetch $ZUUL_URL/$project $ref
+        case "$project" in
+            "openstack/trove")
+                mapped_project="tesora/tesora-trove"
+                ;;
+            "openstack/trove-integration")
+                mapped_project="tesora/tesora-trove-integration"
+                ;;
+            "openstack/python-troveclient")
+                mapped_project="tesora/tesora-python-troveclient"
+                ;;
+            "openstack/horizon")
+                mapped_project="tesora/tesora-horizon"
+                ;;
+            "openstack-infra/devstack-gate")
+                mapped_project="tesora/tesora-devstack-gate"
+                ;;
+            *)
+                mapped_project=project
+        esac
+
+        git fetch $ZUUL_URL/$mapped_project $ref
         return $?
     else
         # return failing
@@ -216,6 +238,7 @@ function git_remote_set_url {
     git remote set-url $1 $2
 }
 
+# Fake out consumer with symbolic linking if project needs to be created.
 function git_clone_and_cd {
     local project=$1
     local short_project=$2
@@ -223,7 +246,32 @@ function git_clone_and_cd {
 
     if [[ ! -e $short_project ]]; then
         echo "  Need to clone $short_project"
-        git clone $git_base/$project
+        # BH.  Todo, variables
+        case "$project" in
+            "openstack/trove")
+                git clone https://github.com/Tesora/tesora-trove
+                ln -s tesora-trove trove
+                ;;
+            "openstack/trove-integration")
+                git clone https://github.com/Tesora/tesora-trove-integration
+                ln -s tesora-trove-integration trove-integration
+                ;;
+            "openstack/python-troveclient")
+                git clone https://github.com/Tesora/tesora-python-troveclient
+                ln -s tesora-python-troveclient python-troveclient
+                ;;
+            "openstack/horizon")
+                git clone https://github.com/Tesora/tesora-horizon
+                ln -s tesora-horizon horizon
+                ;;
+            "openstack-infra/devstack-gate")
+                git clone https://github.com/Tesora/tesora-devstack-gate
+                ln -s tesora-devstack-gate devstack-gate
+                ;;
+
+            *)
+                git clone $git_base/$project
+        esac
     fi
     cd $short_project
 }
@@ -307,7 +355,26 @@ function setup_project {
     echo "Setting up $project @ $branch"
     git_clone_and_cd $project $short_project
 
-    git_remote_set_url origin $git_base/$project
+    case "$project" in
+        "openstack/trove")
+            git_remote_set_url origin https://github.com/Tesora/tesora-trove
+            ;;
+        "openstack/trove-integration")
+            git_remote_set_url origin https://github.com/Tesora/tesora-trove-integration
+            ;;
+        "openstack/python-troveclient")
+            git_remote_set_url origin https://github.com/Tesora/tesora-python-troveclient
+            ;;
+        "openstack/horizon")
+            git_remote_set_url origin https://github.com/Tesora/tesora-horizon
+            ;;
+        "openstack-infra/devstack-gate")
+            git_remote_set_url origin https://github.com/Tesora/tesora-devstack-gate
+            ;;
+
+        *)
+            git_remote_set_url origin $git_base/$project
+    esac
 
     # allow for possible project branch override
     local uc_project=`echo $short_project | tr [:lower:] [:upper:] | tr '-' '_' | sed 's/[^A-Z_]//'`

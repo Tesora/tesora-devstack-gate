@@ -334,7 +334,7 @@ export DEVSTACK_GATE_REQS_INTEGRATION=${DEVSTACK_GATE_REQS_INTEGRATION:-0}
 
 # Set to 1 if running the project is using libraries not specified
 # in global requirements
-export REQUIREMENTS_MODE=${REQUIREMENTS_MODE:-strict}
+export REQUIREMENTS_MODE=${REQUIREMENTS_MODE:-soft}
 
 # Set to 0 to disable clean logs enforcement (3rd party CI might want to do this
 # until they get their driver cleaned up)

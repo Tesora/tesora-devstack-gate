@@ -378,7 +378,7 @@ function setup_project {
         "openstack-infra/devstack-gate")
             git_remote_set_url origin https://github.com/Tesora/tesora-devstack-gate
             ;;
-        "openstack/requirements"
+        "openstack/requirements")
             git_remote_set_url origin https://github.com/Tesora/tesora-requirements
             ;;
 

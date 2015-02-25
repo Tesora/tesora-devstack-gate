@@ -171,6 +171,9 @@ function git_fetch_at_ref {
             "openstack-infra/devstack-gate")
                 mapped_project="tesora/tesora-devstack-gate"
                 ;;
+            "openstack/requirements")
+                mapped_project="tesora/tesora-requirements"
+                ;;
             *)
                 mapped_project=$project
         esac
@@ -267,6 +270,10 @@ function git_clone_and_cd {
             "openstack-infra/devstack-gate")
                 git clone https://github.com/Tesora/tesora-devstack-gate
                 ln -s tesora-devstack-gate devstack-gate
+                ;;
+            "openstack/requirements")
+                git clone https://github.com/Tesora/tesora-requirements
+                ln -s tesora-requirements requirements
                 ;;
 
             *)
@@ -370,6 +377,9 @@ function setup_project {
             ;;
         "openstack-infra/devstack-gate")
             git_remote_set_url origin https://github.com/Tesora/tesora-devstack-gate
+            ;;
+        "openstack/requirements"
+            git_remote_set_url origin https://github.com/Tesora/tesora-requirements
             ;;
 
         *)

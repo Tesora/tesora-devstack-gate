@@ -40,8 +40,10 @@ PROJECTS="openstack-infra/os-loganalyze $PROJECTS"
 PROJECTS="openstack-infra/pypi-mirror $PROJECTS"
 PROJECTS="openstack-infra/tripleo-ci $PROJECTS"
 PROJECTS="openstack/ceilometer $PROJECTS"
+PROJECTS="openstack/ceilometermiddleware $PROJECTS"
 PROJECTS="openstack/cinder $PROJECTS"
 PROJECTS="openstack/cliff $PROJECTS"
+PROJECTS="openstack/debtcollector $PROJECTS"
 PROJECTS="openstack/dib-utils $PROJECTS"
 PROJECTS="openstack/diskimage-builder $PROJECTS"
 PROJECTS="openstack/django_openstack_auth $PROJECTS"
@@ -79,6 +81,7 @@ PROJECTS="openstack/oslo.policy $PROJECTS"
 PROJECTS="openstack/oslo.rootwrap $PROJECTS"
 PROJECTS="openstack/oslo.utils $PROJECTS"
 PROJECTS="openstack/oslo.serialization $PROJECTS"
+PROJECTS="openstack/oslo.versionedobjects $PROJECTS"
 PROJECTS="openstack/oslo.vmware $PROJECTS"
 PROJECTS="openstack/pycadf $PROJECTS"
 PROJECTS="openstack/python-ceilometerclient $PROJECTS"
@@ -356,6 +359,16 @@ export DEVSTACK_GATE_CEILOMETER_BACKEND=${DEVSTACK_GATE_CEILOMETER_BACKEND:-mysq
 
 # Set Zaqar backend to override the default one. It could be mongodb, redis.
 export DEVSTACK_GATE_ZAQAR_BACKEND=${DEVSTACK_GATE_ZAQAR_BACKEND:-mongodb}
+
+# Set to a space-separated list of projects to prepare in the
+# workspace, e.g. 'openstack-dev/devstack openstack/neutron'.
+# Minimizing the number of targeted projects can reduce the setup cost
+# for jobs that know exactly which repos they need.
+export DEVSTACK_GATE_PROJECTS_OVERRIDE=${DEVSTACK_GATE_PROJECTS_OVERRIDE:-""}
+
+if [ -n "$DEVSTACK_GATE_PROJECTS_OVERRIDE" ]; then
+    PROJECTS=$DEVSTACK_GATE_PROJECTS_OVERRIDE
+fi
 
 if ! function_exists "gate_hook"; then
     # the command we use to run the gate

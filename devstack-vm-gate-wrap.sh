@@ -54,6 +54,7 @@ PROJECTS="openstack/heat-cfntools $PROJECTS"
 PROJECTS="openstack/heat-templates $PROJECTS"
 PROJECTS="openstack/horizon $PROJECTS"
 PROJECTS="openstack/ironic $PROJECTS"
+PROJECTS="openstack/ironic-lib $PROJECTS"
 PROJECTS="openstack/ironic-python-agent $PROJECTS"
 PROJECTS="openstack/keystone $PROJECTS"
 PROJECTS="openstack/keystonemiddleware $PROJECTS"
@@ -233,10 +234,6 @@ export DEVSTACK_GATE_KEYSTONE_V3=${DEVSTACK_GATE_KEYSTONE_V3:-0}
 
 # Set to 1 to enable installing test requirements
 export DEVSTACK_GATE_INSTALL_TESTONLY=${DEVSTACK_GATE_INSTALL_TESTONLY:-0}
-
-# Set to the name of the project (e.g. 'neutron') whose testr
-# artifacts should be processed on cleanup.
-export DEVSTACK_GATE_TESTR_ARTIFACT_TARGET=${DEVSTACK_GATE_TESTR_ARTIFACT_TARGET:-tempest}
 
 # Set to 0 to run services that default under Apache + mod_wsgi under alternatives (e.g. eventlet)
 # if possible

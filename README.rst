@@ -1,7 +1,7 @@
 Devstack Gate
 =============
 
-Tesora fork of openstack-infra/devstack-gate/
+Tesora fork of openstack-infra/devstack-gate
 Knows how to split-brain downstream overrides against otherwise
 upstream devstack build.
 

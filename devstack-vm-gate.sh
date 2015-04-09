@@ -33,7 +33,10 @@ source $TOP_DIR/functions.sh
 echo $PPID > $WORKSPACE/gate.pid
 source `dirname "$(readlink -f "$0")"`/functions.sh
 
-FIXED_RANGE=${DEVSTACK_GATE_FIXED_RANGE:-10.1.0.0/20}
+IP=`hostname  -I | cut -f1 -d' '`
+LAST_OCTET="${IP##*.}"
+
+FIXED_RANGE=${DEVSTACK_GATE_FIXED_RANGE:-10.$LAST_OCTET.0.0/20}
 FLOATING_RANGE=${DEVSTACK_GATE_FLOATING_RANGE:-172.24.5.0/24}
 PUBLIC_NETWORK_GATEWAY=${DEVSTACK_GATE_PUBLIC_NETWORK_GATEWAY:-172.24.5.1}
 # The next two values are used in multinode testing and are related
@@ -103,7 +106,7 @@ function setup_localrc {
 
     if [[ "$DEVSTACK_GATE_NEUTRON" -eq "1" ]]; then
         echo "Q_USE_DEBUG_COMMAND=True" >>"$localrc_file"
-        echo "NETWORK_GATEWAY=10.1.0.1" >>"$localrc_file"
+        echo "NETWORK_GATEWAY=10.$LAST_OCTET.0.1" >>"$localrc_file"
     fi
 
     if [[ "$DEVSTACK_GATE_NEUTRON_DVR" -eq "1" ]]; then

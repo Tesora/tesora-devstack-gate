@@ -1,6 +1,7 @@
 config:
   default:
     master: [default, ceilometer, glance, horizon, nova, swift, cinder, keystone, heat, sahara]
+    EE-1.4: [default, ceilometer, glance, horizon, nova, swift, cinder, keystone, heat, sahara]
     kilo: [default, ceilometer, glance, horizon, nova, swift, cinder, keystone, heat, sahara]
     juno: [default, ceilometer, glance, horizon, nova, swift, cinder, keystone, heat, sahara]
     icehouse: [default, ceilometer, glance, horizon, nova, swift, cinder, keystone, heat]
@@ -45,7 +46,7 @@ branches:
   # The value of ""default" is the name of the "trunk" branch
   default: master
   # Normalized branch names only here, e.g. stable/icehouse => icehouse
-  allowed: [master, kilo, juno, icehouse]
+  allowed: [master, kilo, juno, icehouse, EE-1.4]
 
 features:
   default:

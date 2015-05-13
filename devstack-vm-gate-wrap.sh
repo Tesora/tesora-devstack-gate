@@ -141,10 +141,6 @@ if [ -z "$SKIP_DEVSTACK_GATE_PROJECT" ]; then
     fi
 fi
 
-# Make a directory to store logs
-rm -rf $WORKSPACE/logs
-mkdir -p $WORKSPACE/logs
-
 # The feature matrix to select devstack-gate components
 export DEVSTACK_GATE_FEATURE_MATRIX=${DEVSTACK_GATE_FEATURE_MATRIX:-features.yaml}
 
@@ -229,18 +225,8 @@ export DEVSTACK_GATE_ZAQAR=${DEVSTACK_GATE_ZAQAR:-0}
 # Set to 0 to disable config_drive and use the metadata server instead
 export DEVSTACK_GATE_CONFIGDRIVE=${DEVSTACK_GATE_CONFIGDRIVE:-1}
 
-# Set to 1 to enable running a keystone v3 based gate
-export DEVSTACK_GATE_KEYSTONE_V3=${DEVSTACK_GATE_KEYSTONE_V3:-0}
-
 # Set to 1 to enable installing test requirements
 export DEVSTACK_GATE_INSTALL_TESTONLY=${DEVSTACK_GATE_INSTALL_TESTONLY:-0}
-
-# Set to 0 to run services that default under Apache + mod_wsgi under alternatives (e.g. eventlet)
-# if possible
-export DEVSTACK_GATE_ENABLE_HTTPD_MOD_WSGI_SERVICES=${DEVSTACK_GATE_ENABLE_HTTPD_MOD_WSGI_SERVICES:-1}
-
-# Set to 1 to replace Nova V2 endpoint with V2.1 API
-export DEVSTACK_GATE_NOVA_REPLACE_V2_ENDPOINT_WITH_V21_API=${DEVSTACK_GATE_NOVA_REPLACE_V2_ENDPOINT_WITH_V21_API:-0}
 
 # Set the number of threads to run tempest with
 DEFAULT_CONCURRENCY=$(nproc)
@@ -272,45 +258,70 @@ export DEVSTACK_GATE_GRENADE=${DEVSTACK_GATE_GRENADE:-}
 # the branch name for selecting grenade branches
 GRENADE_BASE_BRANCH=${OVERRIDE_ZUUL_BRANCH:-${ZUUL_BRANCH}}
 
-if [[ "$DEVSTACK_GATE_GRENADE" == "pullup" ]]; then
+
+if [[ -n "$DEVSTACK_GATE_GRENADE" ]]; then
+    # All grenade upgrades get tempest
     export DEVSTACK_GATE_TEMPEST=1
-    if [[ "$GRENADE_BASE_BRANCH" == "stable/juno" ]]; then
-        export GRENADE_OLD_BRANCH="stable/icehouse"
-        export GRENADE_NEW_BRANCH="stable/juno"
-    else # master
-        export GRENADE_OLD_BRANCH="stable/juno"
-        export GRENADE_NEW_BRANCH="$GIT_BRANCH"
-    fi
-elif [[ "$DEVSTACK_GATE_GRENADE" =~ "partial" ]]; then
-    if [[ "$DEVSTACK_GATE_GRENADE" == "partial-ncpu" ]]; then
-        export DO_NOT_UPGRADE_SERVICES=[n-cpu]
-    elif [[ "$DEVSTACK_GATE_GRENADE" == "partial-ironic" ]]; then
-        export DO_NOT_UPGRADE_SERVICES=[ir-api,ir-cond]
-    else
-        echo "Unsupported partial upgrade: $DEVSTACK_GATE_GRENADE"
-        exit 1
-    fi
-    export DEVSTACK_GATE_TEMPEST=1
-    if [[ "$GRENADE_BASE_BRANCH" == "stable/juno" ]]; then
-        export GRENADE_OLD_BRANCH="stable/icehouse"
-        export GRENADE_NEW_BRANCH="stable/juno"
-    else # master
-        export GRENADE_OLD_BRANCH="stable/juno"
-        export GRENADE_NEW_BRANCH="$GIT_BRANCH"
-    fi
-elif [[ "$DEVSTACK_GATE_GRENADE" == "forward" ]]; then
-    export DEVSTACK_GATE_TEMPEST=1
-    if [[ "$GRENADE_BASE_BRANCH" == "stable/icehouse" ]]; then
-        export GRENADE_OLD_BRANCH="stable/icehouse"
-        export GRENADE_NEW_BRANCH="stable/juno"
-    elif [[ "$GRENADE_BASE_BRANCH" == "stable/juno" ]]; then
-        export GRENADE_OLD_BRANCH="stable/juno"
-        export GRENADE_NEW_BRANCH="$GIT_BRANCH"
-    fi
-elif [[ "$DEVSTACK_GATE_GRENADE" =~ "sideways" ]]; then
-    export DEVSTACK_GATE_TEMPEST=1
-    export GRENADE_OLD_BRANCH="$GRENADE_BASE_BRANCH"
-    export GRENADE_NEW_BRANCH="$GRENADE_BASE_BRANCH"
+
+    case $DEVSTACK_GATE_GRENADE in
+
+        # sideways upgrades try to move between configurations in the
+        # same release, typically used for migrating between services
+        # or configurations.
+        sideways-*)
+            export GRENADE_OLD_BRANCH="$GRENADE_BASE_BRANCH"
+            export GRENADE_NEW_BRANCH="$GRENADE_BASE_BRANCH"
+            ;;
+
+        # forward upgrades are an attempt to migrate up from an
+        # existing stable branch to the next release.
+        forward)
+            if [[ "$GRENADE_BASE_BRANCH" == "stable/icehouse" ]]; then
+                export GRENADE_OLD_BRANCH="stable/icehouse"
+                export GRENADE_NEW_BRANCH="stable/juno"
+            elif [[ "$GRENADE_BASE_BRANCH" == "stable/juno" ]]; then
+                export GRENADE_OLD_BRANCH="stable/juno"
+                export GRENADE_NEW_BRANCH="stable/kilo"
+            elif [[ "$GRENADE_BASE_BRANCH" == "stable/kilo" ]]; then
+                export GRENADE_OLD_BRANCH="stable/kilo"
+                export GRENADE_NEW_BRANCH="$GIT_BRANCH"
+            fi
+            ;;
+
+        # partial upgrades are like normal upgrades except they leave
+        # certain services behind. We use the base 4 operator ';&'
+        # here to fall trhough to the next conditionals
+        partial-*)
+            if [[ "$DEVSTACK_GATE_GRENADE" == "partial-ncpu" ]]; then
+                export DO_NOT_UPGRADE_SERVICES=[n-cpu]
+            elif [[ "$DEVSTACK_GATE_GRENADE" == "partial-ironic" ]]; then
+                export DO_NOT_UPGRADE_SERVICES=[ir-api,ir-cond]
+            fi
+            ;&
+
+        # pullup upgrades are our normal upgrade test. Can you upgrade
+        # to the current patch from the last stable.
+        pullup)
+            if [[ "$GRENADE_BASE_BRANCH" == "stable/juno" ]]; then
+                export GRENADE_OLD_BRANCH="stable/icehouse"
+                export GRENADE_NEW_BRANCH="stable/juno"
+            elif [[ "$GRENADE_BASE_BRANCH" == "stable/kilo" ]]; then
+                export GRENADE_OLD_BRANCH="stable/juno"
+                export GRENADE_NEW_BRANCH="stable/kilo"
+            else # master
+                export GRENADE_OLD_BRANCH="stable/kilo"
+                export GRENADE_NEW_BRANCH="$GIT_BRANCH"
+            fi
+            ;;
+
+        # If we got here, someone typoed a thing, and we should fail
+        # explicitly so they don't accidentally pass in some what that
+        # is unexpected.
+        *)
+            echo "Unsupported upgrade mode: $DEVSTACK_GATE_GRENADE"
+            exit 1
+            ;;
+    esac
 fi
 
 # Set the virtualization driver to: libvirt, openvz, xenapi
@@ -357,6 +368,17 @@ export DEVSTACK_GATE_CEILOMETER_BACKEND=${DEVSTACK_GATE_CEILOMETER_BACKEND:-mysq
 # Set Zaqar backend to override the default one. It could be mongodb, redis.
 export DEVSTACK_GATE_ZAQAR_BACKEND=${DEVSTACK_GATE_ZAQAR_BACKEND:-mongodb}
 
+# The topology of the system determinates the service distribution
+# among the nodes.
+# aio: `all in one` just only one node used
+# aiopcpu: `all in one plus compute` one node will be installed as aio
+# the extra nodes will gets only limited set of services
+# ctrlpcpu: `controller plus compute` One node will gets the controller type
+# services without the compute type of services, the others gets,
+# the compute style services several services can be common,
+# the networking services also presents on the controller [WIP]
+export DEVSTACK_GATE_TOPOLOGY=${DEVSTACK_GATE_TOPOLOGY:-aio}
+
 # Set to a space-separated list of projects to prepare in the
 # workspace, e.g. 'openstack-dev/devstack openstack/neutron'.
 # Minimizing the number of targeted projects can reduce the setup cost
@@ -380,45 +402,101 @@ echo "Pipeline: $ZUUL_PIPELINE"
 echo "Available disk space on this host:"
 indent df -h
 
-echo "Setting up the host"
+# Enable tracing while we transition to using ansible to run
+# setup across multiple nodes.
+set -x
+# Install ansible
+sudo -H pip install virtualenv
+virtualenv /tmp/ansible
+/tmp/ansible/bin/pip install ansible
+export ANSIBLE=/tmp/ansible/bin/ansible
+
+# Write inventory file with groupings
+COUNTER=1
+echo "[primary]" > "$WORKSPACE/inventory"
+echo "localhost ansible_connection=local host_counter=$COUNTER" >> "$WORKSPACE/inventory"
+echo "[subnodes]" >> "$WORKSPACE/inventory"
+SUBNODES=$(cat /etc/nodepool/sub_nodes_private)
+for SUBNODE in $SUBNODES ; do
+    let COUNTER=COUNTER+1
+    echo "$SUBNODE host_counter=$COUNTER" >> "$WORKSPACE/inventory"
+done
+
+# NOTE(clarkb): for simplicity we evaluate all bash vars in ansible commands
+# on the node running these scripts, we do not pass through unexpanded
+# vars to ansible shell commands. This may need to change in the future but
+# for now the current setup is simple, consistent and easy to understand.
+
+# Copy bootstrap to remote hosts
+# It is in brackets for avoiding inheriting a huge environment variable
+(export PROJECTS; export > "$WORKSPACE/test_env.sh")
+$ANSIBLE subnodes -f 5 -i "$WORKSPACE/inventory" -m copy \
+    -a "src='$WORKSPACE/devstack-gate' dest='$WORKSPACE'"
+$ANSIBLE subnodes -f 5 -i "$WORKSPACE/inventory" -m copy \
+    -a "src='$WORKSPACE/test_env.sh' dest='$WORKSPACE/test_env.sh'"
+
+# Make a directory to store logs
+$ANSIBLE all -f 5 -i "$WORKSPACE/inventory" -m file \
+    -a "path='$WORKSPACE/logs' state=absent"
+$ANSIBLE all -f 5 -i "$WORKSPACE/inventory" -m file \
+    -a "path='$WORKSPACE/logs' state=directory"
+
+# Run ansible to do setup_host on all nodes.
+echo "Setting up the hosts"
+
+# little helper that runs anything passed in under tsfilter
+function run_command {
+    local fn="$@"
+    local cmd=""
+
+    # note that we want to keep the tsfilter separate; it's a trap for
+    # new-players that errexit isn't applied if we do "&& tsfilter
+    # ..."  and thus we won't pick up any failures in the commands the
+    # function runs.
+    read -r -d '' cmd <<EOF
+source '$WORKSPACE/test_env.sh'
+source '$WORKSPACE/devstack-gate/functions.sh'
+set -o errexit
+tsfilter $fn
+executable=/bin/bash
+EOF
+
+    echo "$cmd"
+}
+
 echo "... this takes a few seconds (logs at logs/devstack-gate-setup-host.txt.gz)"
-tsfilter setup_host &> $WORKSPACE/logs/devstack-gate-setup-host.txt
+$ANSIBLE all -f 5 -i "$WORKSPACE/inventory" -m shell \
+    -a "$(run_command setup_host)" &> "$WORKSPACE/logs/devstack-gate-setup-host.txt"
 
 if [ -n "$DEVSTACK_GATE_GRENADE" ]; then
     echo "Setting up the new (migrate to) workspace"
     echo "... this takes 3 - 5 minutes (logs at logs/devstack-gate-setup-workspace-new.txt.gz)"
-    tsfilter setup_workspace "$GRENADE_NEW_BRANCH" "$BASE/new" copycache &> \
-        $WORKSPACE/logs/devstack-gate-setup-workspace-new.txt
+    $ANSIBLE all -f 5 -i "$WORKSPACE/inventory" -m shell \
+             -a "$(run_command setup_workspace '$GRENADE_NEW_BRANCH' '$BASE/new')" \
+        &> "$WORKSPACE/logs/devstack-gate-setup-workspace-new.txt"
     echo "Setting up the old (migrate from) workspace ..."
     echo "... this takes 3 - 5 minutes (logs at logs/devstack-gate-setup-workspace-old.txt.gz)"
-    tsfilter setup_workspace "$GRENADE_OLD_BRANCH" "$BASE/old" &> \
-        $WORKSPACE/logs/devstack-gate-setup-workspace-old.txt
+    $ANSIBLE all -f 5 -i "$WORKSPACE/inventory" -m shell \
+        -a "$(run_command setup_workspace '$GRENADE_OLD_BRANCH' '$BASE/old')" \
+        &> "$WORKSPACE/logs/devstack-gate-setup-workspace-old.txt"
 else
     echo "Setting up the workspace"
     echo "... this takes 3 - 5 minutes (logs at logs/devstack-gate-setup-workspace-new.txt.gz)"
-    tsfilter setup_workspace "$OVERRIDE_ZUUL_BRANCH" "$BASE/new" &> \
-        $WORKSPACE/logs/devstack-gate-setup-workspace-new.txt
+    $ANSIBLE all -f 5 -i "$WORKSPACE/inventory" -m shell \
+        -a "$(run_command setup_workspace '$OVERRIDE_ZUUL_BRANCH' '$BASE/new')" \
+        &> "$WORKSPACE/logs/devstack-gate-setup-workspace-new.txt"
 fi
-# It is in brackets for avoiding inheriting a huge environment variable
-(export PROJECTS; export >$WORKSPACE/test_env.sh)
 
 # relocate and symlink logs into $BASE to save space on the root filesystem
-if [ -d "$WORKSPACE/logs" -a \! -e "$BASE/logs" ]; then
-    sudo mv $WORKSPACE/logs $BASE/
-    ln -s $BASE/logs $WORKSPACE/
-fi
+# TODO: make this more ansibley
+$ANSIBLE all -f 5 -i "$WORKSPACE/inventory" -m shell -a "
+if [ -d '$WORKSPACE/logs' -a \! -e '$BASE/logs' ]; then
+    sudo mv '$WORKSPACE/logs' '$BASE/'
+    ln -s '$BASE/logs' '$WORKSPACE/'
+fi executable=/bin/bash"
 
-# The topology of the system determinates the service distribution
-# among the nodes.
-# aio: `all in one` just only one node used
-# aiopcpu: `all in one plus compute` one node will be installed as aio
-# the extra nodes will gets only limited set of services
-# ctrlpcpu: `controller plus compute` One node will gets the controller type
-# services without the compute type of services, the others gets,
-# the compute style services several services can be common,
-# the networking services also presents on the controller [WIP]
-export DEVSTACK_GATE_TOPOLOGY=${DEVSTACK_GATE_TOPOLOGY:-aio}
-
+# Note that hooks should be multihost aware if necessary.
+# devstack-vm-gate-wrap.sh will not automagically run the hooks on each node.
 # Run pre test hook if we have one
 call_hook_if_defined "pre_test_hook"
 
@@ -441,6 +519,7 @@ if [ $GATE_RETVAL -eq 0 ]; then
 fi
 
 if [ $GATE_RETVAL -eq 137 ] && [ -f $WORKSPACE/gate.pid ] ; then
+    echo "Job timed out"
     GATEPID=`cat $WORKSPACE/gate.pid`
     echo "Killing process group ${GATEPID}"
     sudo kill -s 9 -${GATEPID}
@@ -448,14 +527,10 @@ fi
 
 echo "Cleaning up host"
 echo "... this takes 3 - 4 minutes (logs at logs/devstack-gate-cleanup-host.txt.gz)"
-tsfilter cleanup_host &> $WORKSPACE/devstack-gate-cleanup-host.txt
-if [[ "$DEVSTACK_GATE_TOPOLOGY" != "aio" ]]; then
-    for NODE in `cat /etc/nodepool/sub_nodes_private`; do
-        echo "Collecting logs from $NODE"
-        remote_command $NODE "source $WORKSPACE/test_env.sh; source $BASE/new/devstack-gate/functions.sh; cleanup_host"
-        rsync -avz "$NODE:$BASE/logs/"  "$BASE/logs/$NODE-subnode/"
-    done
-fi
+$ANSIBLE all -f 5 -i "$WORKSPACE/inventory" -m shell \
+    -a "$(run_command cleanup_host)" &> "$WORKSPACE/devstack-gate-cleanup-host.txt"
+$ANSIBLE subnodes -f 5 -i "$WORKSPACE/inventory" -m synchronize \
+    -a "mode=pull src='$BASE/logs/' dest='$BASE/logs/subnode-{{ host_counter }}'"
 sudo mv $WORKSPACE/devstack-gate-cleanup-host.txt $BASE/logs/
 
 exit $RETVAL

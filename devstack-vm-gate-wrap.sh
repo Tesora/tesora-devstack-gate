@@ -30,6 +30,9 @@ export PATH=$PATH:/usr/local/sbin:/usr/sbin
 
 source $WORKSPACE/devstack-gate/functions.sh
 
+echo "BRIAN0: dumping env beginning of safe-..wrap"
+env
+
 start_timer
 
 PROJECTS="openstack-dev/devstack $PROJECTS"
@@ -396,6 +399,10 @@ if [ -n "$DEVSTACK_GATE_GRENADE" ]; then
 else
     echo "Setting up the workspace"
     echo "... this takes 3 - 5 minutes (logs at logs/devstack-gate-setup-workspace-new.txt.gz)"
+
+    echo "BRIAN1: dumping env before setup workspace"
+    env
+
     tsfilter setup_workspace "$OVERRIDE_ZUUL_BRANCH" "$BASE/new" &> \
         $WORKSPACE/logs/devstack-gate-setup-workspace-new.txt
 fi

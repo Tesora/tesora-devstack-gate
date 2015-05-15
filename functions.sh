@@ -410,7 +410,7 @@ function setup_project {
 
             # if we're told to be building EE-1.4, we're really using kilo upstream bits
             if [ "$branch" == "stable/EE-1.4" ]; then
-                branch = "stable/kilo"
+                branch="stable/kilo"
             fi
 
     esac

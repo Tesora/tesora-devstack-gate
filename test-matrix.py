@@ -41,6 +41,8 @@ def normalize_branch(branch):
         branch = GRID['branches']['default']
     elif branch.startswith("stable/"):
         branch = branch[len("stable/"):]
+    elif branch.startswith("dev/"):
+        branch = branch[len("dev/"):]
     elif branch.startswith("proposed/"):
         branch = branch[len("proposed/"):]
         for allowed in GRID['branches']['allowed']:

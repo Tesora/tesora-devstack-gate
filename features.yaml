@@ -1,12 +1,12 @@
 config:
   default:
-    master: [default, ceilometer, glance, horizon, nova, swift, cinder, keystone, sahara]
-    liberty: [default, ceilometer, glance, horizon, nova, swift, cinder, keystone, sahara]
-    kilo: [default, ceilometer, glance, horizon, nova, swift, cinder, keystone, sahara]
-    EE-1.4: [default, ceilometer, glance, horizon, nova, swift, cinder, keystone, heat, sahara]
-    EE-1.5: [default, ceilometer, glance, horizon, nova, swift, cinder, keystone, heat, sahara]
-    CE-1.4: [default, ceilometer, glance, horizon, nova, swift, cinder, keystone, heat, sahara]
-    juno: [default, ceilometer, glance, horizon, nova, swift, cinder, keystone, sahara]
+    master: [default, ceilometer, glance, horizon, nova, swift, cinder, keystone]
+    liberty: [default, ceilometer, glance, horizon, nova, swift, cinder, keystone]
+    kilo: [default, ceilometer, glance, horizon, nova, swift, cinder, keystone]
+    EE-1.4: [default, ceilometer, glance, horizon, nova, swift, cinder, keystone, heat]
+    EE-1.5: [default, ceilometer, glance, horizon, nova, swift, cinder, keystone, heat]
+    CE-1.4: [default, ceilometer, glance, horizon, nova, swift, cinder, keystone, heat]
+    juno: [default, ceilometer, glance, horizon, nova, swift, cinder, keystone]
     icehouse: [default, ceilometer, glance, horizon, nova, swift, cinder, keystone]
     # This can be used by functional jobs that only want their dependencies installed
     # and don't need to incur the overhead of installing all services in the process.
@@ -44,6 +44,8 @@ config:
     features: [zeromq]
   ceph:
     features: [ceph]
+  heat:
+    features: [heat]
 
 branches:
   # The value of ""default" is the name of the "trunk" branch

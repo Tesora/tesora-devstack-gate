@@ -195,6 +195,10 @@ export DEVSTACK_CINDER_SECURE_DELETE=${DEVSTACK_CINDER_SECURE_DELETE:-0}
 # Only applicable to master branch
 export DEVSTACK_GATE_NEUTRON=${DEVSTACK_GATE_NEUTRON:-0}
 
+# Set to 1 to run neutron with features that make it unstable
+# TODO(armax): get rid of this if as soon as bugs #1464612 and #1432189 get resolved
+export DEVSTACK_GATE_NEUTRON_UNSTABLE=${DEVSTACK_GATE_NEUTRON_UNSTABLE:-0}
+
 # Set to 1 to run neutron distributed virtual routing
 export DEVSTACK_GATE_NEUTRON_DVR=${DEVSTACK_GATE_NEUTRON_DVR:-0}
 
@@ -497,6 +501,18 @@ if [ -d '$WORKSPACE/logs' -a \! -e '$BASE/logs' ]; then
     ln -s '$BASE/logs' '$WORKSPACE/'
 fi executable=/bin/bash"
 
+# The DEVSTACK_GATE_SETTINGS variable may contain a path to a script that
+# should be sourced after the environment has been set up.  This is useful for
+# allowing projects to provide a script in their repo that sets some custom
+# environment variables.
+if [ -n "${DEVSTACK_GATE_SETTINGS}" ] ; then
+    if [ -f "${DEVSTACK_GATE_SETTINGS}" ] ; then
+        source ${DEVSTACK_GATE_SETTINGS}
+    else
+        echo "WARNING: DEVSTACK_GATE_SETTINGS file does not exist: '${DEVSTACK_GATE_SETTINGS}'"
+    fi
+fi
+
 # Note that hooks should be multihost aware if necessary.
 # devstack-vm-gate-wrap.sh will not automagically run the hooks on each node.
 # Run pre test hook if we have one
@@ -511,6 +527,8 @@ RETVAL=$GATE_RETVAL
 if [ $GATE_RETVAL -ne 0 ]; then
     echo "ERROR: the main setup script run by this job failed - exit code: $GATE_RETVAL"
     echo "    please look at the relevant log files to determine the root cause"
+    echo "Running devstack worlddump.py"
+    sudo $BASE/new/devstack/tools/worlddump.py -d $BASE/logs
 fi
 
 # Run post test hook if we have one

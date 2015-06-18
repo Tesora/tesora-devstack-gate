@@ -125,6 +125,11 @@ function setup_localrc {
     if [[ "$DEVSTACK_GATE_NEUTRON" -eq "1" ]]; then
         echo "Q_USE_DEBUG_COMMAND=True" >>"$localrc_file"
         echo "NETWORK_GATEWAY=10.$LAST_OCTET.0.1" >>"$localrc_file"
+        # TODO(armax): get rid of this if as soon as bugs #1464612 and #1432189 get resolved
+        if [[ "$DEVSTACK_GATE_NEUTRON_UNSTABLE" -eq "0" ]]; then
+            echo "MYSQL_DRIVER=MySQL-python" >>"$localrc_file"
+            echo "API_WORKERS=0" >>"$localrc_file"
+        fi
     fi
 
     if [[ "$DEVSTACK_GATE_NEUTRON_DVR" -eq "1" ]]; then
@@ -316,17 +321,26 @@ EOF
     fi
 
     if [[ -n "$DEVSTACK_GATE_GRENADE" ]]; then
-        if [[ "$localrc_old" == "old" ]]; then
+        if [[ "$localrc_oldnew" == "old" ]]; then
             echo "GRENADE_PHASE=base" >> "$localrc_file"
         else
             echo "GRENADE_PHASE=target" >> "$localrc_file"
         fi
         # keystone deployed with mod wsgi cannot be upgraded or migrated
         # until https://launchpad.net/bugs/1365105 is resolved.
-        case $GRENADE_BASE_BRANCH in
+        case $GRENADE_NEW_BRANCH in
             "stable/icehouse")
                 ;&
             "stable/juno")
+                echo "KEYSTONE_USE_MOD_WSGI=False" >> "$localrc_file"
+                ;;
+            "stable/kilo")
+                # while both juno and kilo can run under wsgi, they
+                # can't run a code only upgrade because the
+                # configuration assumes copying python files around
+                # during config stage. This might be addressed by
+                # keystone team later, hence separate comment and code
+                # block.
                 echo "KEYSTONE_USE_MOD_WSGI=False" >> "$localrc_file"
                 ;;
         esac

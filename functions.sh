@@ -308,10 +308,13 @@ function fix_disk_layout {
     # disk and mount it on /opt, syncing the previous contents of /opt
     # over.
     if [ `grep SwapTotal /proc/meminfo | awk '{ print $2; }'` -eq 0 ]; then
-        if [ -b /dev/vdb ]; then
-            DEV='/dev/vdb'
-        elif [ -b /dev/xvde ]; then
+        if [ -b /dev/xvde ]; then
             DEV='/dev/xvde'
+        else
+            EPHEMERAL_DEV=$(blkid -L ephemeral0 || true)
+            if [ -n "$EPHEMERAL_DEV" -a -b "$EPHEMERAL_DEV" ]; then
+                DEV=$EPHEMERAL_DEV
+            fi
         fi
         if [ -n "$DEV" ]; then
             local swap=${DEV}1
@@ -319,8 +322,8 @@ function fix_disk_layout {
             local optdev=${DEV}3
             if mount | grep ${DEV} > /dev/null; then
                 echo "*** ${DEV} appears to already be mounted"
-                mount
-                return 1
+                echo "*** ${DEV} unmounting and reformating"
+                sudo umount ${DEV}
             fi
             sudo parted ${DEV} --script -- mklabel msdos
             sudo parted ${DEV} --script -- mkpart primary linux-swap 1 8192
@@ -349,7 +352,9 @@ function fix_disk_layout {
     # kicking in on some processes despite swap being available;
     # particularly things like mysql which have very high ratio of
     # anonymous-memory to file-backed mappings.
-    #
+
+    # make sure reload of sysctl doesn't reset this
+    sudo sed -i '/vm.swappiness/d' /etc/sysctl.conf
     # This sets swappiness low; we really don't want to be relying on
     # cloud I/O based swap during our runs
     sudo sysctl -w vm.swappiness=10
@@ -842,6 +847,10 @@ function cleanup_host {
     fi
     if [ -f /etc/ceph/ceph.conf ] ; then
         sudo cp /etc/ceph/ceph.conf $BASE/logs/ceph_conf.txt
+    fi
+
+    if [ -d /var/log/openvswitch ] ; then
+        sudo cp -r /var/log/openvswitch $BASE/logs/
     fi
 
     # Make sure jenkins can read all the logs and configs

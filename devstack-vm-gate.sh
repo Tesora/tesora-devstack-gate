@@ -196,7 +196,7 @@ EOF
     # project-config. It's *super important* that this happens after
     # DEST is set, as enable_plugin uses DEST value
     if [[ ",$MY_ENABLED_SERVICES," =~ ,trove, ]]; then
-        echo "enable_plugin trove https://github.com/tesora/tesora-trove" >>"$localrc_file"
+        echo "enable_plugin trove https://github.com/tesora/tesora-trove $localrc_branch" >>"$localrc_file"
     fi
 
 

@@ -221,25 +221,33 @@ function git_has_branch {
 }
 
 function git_prune {
-    git remote prune origin
+    git_timed remote prune origin
 }
 
 function git_remote_update {
-    # Attempt a git remote update. Run for up to 5 minutes before killing.
-    # If first SIGTERM does not kill the process wait a minute then SIGKILL.
-    # If update fails try again for up to a total of 3 attempts.
-    MAX_ATTEMPTS=3
-    COUNT=0
-    until timeout -k 1m 5m git remote update; do
-        COUNT=$(($COUNT + 1))
-        echo "git remote update failed."
-        if [ $COUNT -eq $MAX_ATTEMPTS ]; then
-            echo "Max attempts reached for git remote update; giving up."
+    git_timed remote update
+}
+
+# git can sometimes get itself infinitely stuck with transient network
+# errors or other issues with the remote end.  This wraps git in a
+# timeout/retry loop and is intended to watch over non-local git
+# processes that might hang. Run for up to 5 minutes before killing.
+# If first SIGTERM does not kill the process wait a minute then SIGKILL.
+# If the git operation fails try again for up to a total of 3 attempts.
+# usage: git_timed <git-command>
+function git_timed {
+    local max_attempts=3
+    local count=0
+    until timeout -k 1m 5m git "$@"; do
+        count=$(($count + 1))
+        echo "git $@ failed."
+        if [ $count -eq $max_attempts ]; then
+            echo "Max attempts reached for git $@; giving up."
             exit 1
         fi
-        SLEEP_TIME=$((30 + $RANDOM % 60))
-        echo "sleep $SLEEP_TIME before retrying."
-        sleep $SLEEP_TIME
+        local sleep_time=$((30 + $RANDOM % 60))
+        echo "sleep $sleep_time before retrying."
+        sleep $sleep_time
     done
 }
 
@@ -308,10 +316,13 @@ function fix_disk_layout {
     # disk and mount it on /opt, syncing the previous contents of /opt
     # over.
     if [ `grep SwapTotal /proc/meminfo | awk '{ print $2; }'` -eq 0 ]; then
-        if [ -b /dev/vdb ]; then
-            DEV='/dev/vdb'
-        elif [ -b /dev/xvde ]; then
+        if [ -b /dev/xvde ]; then
             DEV='/dev/xvde'
+        else
+            EPHEMERAL_DEV=$(blkid -L ephemeral0 || true)
+            if [ -n "$EPHEMERAL_DEV" -a -b "$EPHEMERAL_DEV" ]; then
+                DEV=$EPHEMERAL_DEV
+            fi
         fi
         if [ -n "$DEV" ]; then
             local swap=${DEV}1
@@ -319,8 +330,8 @@ function fix_disk_layout {
             local optdev=${DEV}3
             if mount | grep ${DEV} > /dev/null; then
                 echo "*** ${DEV} appears to already be mounted"
-                mount
-                return 1
+                echo "*** ${DEV} unmounting and reformating"
+                sudo umount ${DEV}
             fi
             sudo parted ${DEV} --script -- mklabel msdos
             sudo parted ${DEV} --script -- mkpart primary linux-swap 1 8192
@@ -349,7 +360,9 @@ function fix_disk_layout {
     # kicking in on some processes despite swap being available;
     # particularly things like mysql which have very high ratio of
     # anonymous-memory to file-backed mappings.
-    #
+
+    # make sure reload of sysctl doesn't reset this
+    sudo sed -i '/vm.swappiness/d' /etc/sysctl.conf
     # This sets swappiness low; we really don't want to be relying on
     # cloud I/O based swap during our runs
     sudo sysctl -w vm.swappiness=10
@@ -842,6 +855,10 @@ function cleanup_host {
     fi
     if [ -f /etc/ceph/ceph.conf ] ; then
         sudo cp /etc/ceph/ceph.conf $BASE/logs/ceph_conf.txt
+    fi
+
+    if [ -d /var/log/openvswitch ] ; then
+        sudo cp -r /var/log/openvswitch $BASE/logs/
     fi
 
     # Make sure jenkins can read all the logs and configs

@@ -43,6 +43,21 @@ function function_exists {
     type $1 2>/dev/null | grep -q 'is a function'
 }
 
+function apt_get_install {
+    # fetch the updates in a loop to ensure that we're update to
+    # date. Only do this once per run. Give up to 5 minutes to succeed
+    # here.
+    if [[ -z "$APT_UPDATED" ]]; then
+        if ! timeout 300 sh -c "while ! sudo apt-get update; do sleep 30; done"; then
+            echo "Failed to update apt repos, we're dead now"
+            exit 1
+        fi
+        APT_UPDATED=1
+    fi
+
+    sudo apt-get --assume-yes install $@
+}
+
 function call_hook_if_defined {
     local hook_name=$1
     local filename=${2-$WORKSPACE/devstack-gate-$hook_name.txt}
@@ -726,6 +741,7 @@ function cleanup_host {
     # libvirt
     if [ -d /var/log/libvirt ] ; then
         sudo cp -r /var/log/libvirt $BASE/logs/
+        sudo cp -r /usr/share/libvirt/cpu_map.xml $BASE/logs/libvirt/cpu_map.xml
     fi
 
     # sudo config
@@ -937,6 +953,45 @@ function remote_copy_file {
     shift
     scp $ssh_opts "$src" "$dest"
 }
+
+# enable_netconsole
+function enable_netconsole {
+
+    # do nothing if not set
+    if [[ $DEVSTACK_GATE_NETCONSOLE = "" ]]; then
+        return
+    fi
+
+    local remote_ip=$(echo $DEVSTACK_GATE_NETCONSOLE | awk -F: -e '{print $1}')
+    local remote_port=$(echo $DEVSTACK_GATE_NETCONSOLE | awk -F: -e '{print $2}')
+
+    # netconsole requires the device to send and the destitation MAC,
+    # which is obviously on the same subnet.  The way to get packets
+    # out to the world is specify the default gw as the remote
+    # destination.
+    local default_gw=$(ip route | grep default | awk '{print $3}')
+    local gw_mac=$(arp $default_gw | grep $default_gw | awk '{print $3}')
+    local gw_dev=$(ip route | grep default | awk '{print $5}')
+
+    # turn up message output
+    sudo dmesg -n 8
+
+    sudo modprobe configfs
+    sudo modprobe netconsole
+
+    sudo mount none -t configfs /sys/kernel/config
+
+    sudo mkdir /sys/kernel/config/netconsole/target1
+
+    pushd /sys/kernel/config/netconsole/target1
+    echo "$gw_dev" | sudo tee ./dev_name
+    echo "$remote_ip" | sudo tee ./remote_ip
+    echo "$gw_mac" | sudo tee ./remote_mac
+    echo "$remote_port" | sudo tee ./remote_port
+    echo 1 | sudo tee ./enabled
+    popd
+}
+
 
 # This function creates an internal gre bridge to connect all external
 # network bridges across the compute and network nodes.

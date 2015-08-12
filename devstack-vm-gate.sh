@@ -63,11 +63,98 @@ function setup_ssh {
         -a "src=/etc/nodepool/id_rsa dest='$path/id_rsa' mode=0400"
 }
 
+function setup_multinode_connectivity {
+    local mode=${1:-"devstack"}
+    # Multinode setup variables:
+    #
+    # ``localrc`` - location to write localrc content on the primary
+    # node. In grenade mode we write to the grenade template that is
+    # copied into old and new.
+    #
+    # ``old_or_new`` - should the subnodes be computed on the old side
+    # or new side. For grenade where we don't upgrade them, calculate
+    # on the old side.
+    local localrc=$BASE/new/devstack/localrc
+    local old_or_new="new"
+    if [[ "$mode" == "grenade" ]]; then
+        localrc=$BASE/new/grenade/devstack.localrc
+        old_or_new="old"
+    fi
+    # set explicit paths on all conf files we're writing so that
+    # current working directory doesn't introduce subtle bugs.
+    local devstack_dir=$BASE/$old_or_new/devstack
+    local sub_localrc=$devstack_dir/sub_localrc
+    local localconf=$devstack_dir/local.conf
+
+    set -x  # for now enabling debug and do not turn it off
+    setup_localrc $old_or_new "$sub_localrc" "sub"
+
+    PRIMARY_NODE=`cat /etc/nodepool/primary_node_private`
+    SUB_NODES=`cat /etc/nodepool/sub_nodes_private`
+    if [[ "$DEVSTACK_GATE_NEUTRON" -ne '1' ]]; then
+        # TODO (clarkb): figure out how to make bridge setup sane with ansible.
+        ovs_gre_bridge "br_pub" $PRIMARY_NODE "True" 1 \
+                       $FLOATING_HOST_PREFIX $FLOATING_HOST_MASK \
+                       $SUB_NODES
+        ovs_gre_bridge "br_flat" $PRIMARY_NODE "False" 128 \
+                       $SUB_NODES
+        cat <<EOF >>"$sub_localrc"
+FLAT_INTERFACE=br_flat
+PUBLIC_INTERFACE=br_pub
+MULTI_HOST=True
+EOF
+        cat <<EOF >>"$localrc"
+FLAT_INTERFACE=br_flat
+PUBLIC_INTERFACE=br_pub
+MULTI_HOST=True
+EOF
+    elif [[ "$DEVSTACK_GATE_NEUTRON_DVR" -eq '1' ]]; then
+        ovs_gre_bridge "br-ex" $PRIMARY_NODE "True" 1 \
+                       $FLOATING_HOST_PREFIX $FLOATING_HOST_MASK \
+                       $SUB_NODES
+    fi
+
+    echo "Preparing cross node connectivity"
+    setup_ssh $BASE/new/.ssh
+    setup_ssh ~root/.ssh
+    # TODO (clarkb) ansiblify the /etc/hosts and known_hosts changes
+    # set up ssh_known_hosts by IP and /etc/hosts
+    for NODE in $SUB_NODES; do
+        ssh-keyscan $NODE >> /tmp/tmp_ssh_known_hosts
+        echo $NODE `remote_command $NODE hostname | tr -d '\r'` >> /tmp/tmp_hosts
+    done
+    ssh-keyscan `cat /etc/nodepool/primary_node_private` >> /tmp/tmp_ssh_known_hosts
+    echo `cat /etc/nodepool/primary_node_private` `hostname` >> /tmp/tmp_hosts
+    cat /tmp/tmp_hosts | sudo tee --append /etc/hosts
+
+    # set up ssh_known_host files based on hostname
+    for HOSTNAME in `cat /tmp/tmp_hosts | cut -d' ' -f2`; do
+        ssh-keyscan $HOSTNAME >> /tmp/tmp_ssh_known_hosts
+    done
+
+    $ANSIBLE all --sudo -f 5 -i "$WORKSPACE/inventory" -m copy \
+             -a "src=/tmp/tmp_ssh_known_hosts dest=/etc/ssh/ssh_known_hosts mode=0444"
+
+    for NODE in $SUB_NODES; do
+        remote_copy_file /tmp/tmp_hosts $NODE:/tmp/tmp_hosts
+        remote_command $NODE "cat /tmp/tmp_hosts | sudo tee --append /etc/hosts > /dev/null"
+        cp $sub_localrc /tmp/tmp_sub_localrc
+        echo "HOST_IP=$NODE" >> /tmp/tmp_sub_localrc
+        remote_copy_file /tmp/tmp_sub_localrc $NODE:$devstack_dir/localrc
+        remote_copy_file $localconf $NODE:$localconf
+    done
+}
+
 function setup_localrc {
     local localrc_oldnew=$1;
-    local localrc_branch=$2;
-    local localrc_file=$3
-    local role=$4
+    local localrc_file=$2
+    local role=$3
+
+    # The branch we use to compute the feature matrix is pretty
+    # straight forward. If it's a GRENADE job, we use the
+    # GRENADE_OLD_BRANCH, otherwise the branch ZUUL has told is it's
+    # running on.
+    local branch_for_matrix=${GRENADE_OLD_BRANCH:-$OVERRIDE_ZUUL_BRANCH}
 
     # Allow calling context to pre-populate the localrc file
     # with additional values
@@ -81,12 +168,15 @@ function setup_localrc {
     else
         # Install PyYaml for test-matrix.py
         if uses_debs; then
-            sudo apt-get update
-            sudo apt-get --assume-yes install python-yaml
+            if ! dpkg -s python-yaml > /dev/null; then
+                apt_get_install python-yaml
+            fi
         elif is_fedora; then
-            sudo yum install -y PyYAML
+            if ! rpm --quiet -q "PyYAML"; then
+                sudo yum install -y PyYAML
+            fi
         fi
-        MY_ENABLED_SERVICES=`cd $BASE/new/devstack-gate && ./test-matrix.py -b $localrc_branch -f $DEVSTACK_GATE_FEATURE_MATRIX`
+        MY_ENABLED_SERVICES=`cd $BASE/new/devstack-gate && ./test-matrix.py -b $branch_for_matrix -f $DEVSTACK_GATE_FEATURE_MATRIX`
         local original_enabled_services=$MY_ENABLED_SERVICES
 
         # TODO(afazekas): Move to the feature grid
@@ -316,9 +406,9 @@ EOF
         # in parallel run.
         echo "VOLUME_BACKING_FILE_SIZE=24G" >> "$localrc_file"
         # in order to ensure glance http tests don't time out, we
-        # specify the TEMPEST_HTTP_IMAGE address to be horrizon's
-        # front page. Kind of hacky, but it works.
-        echo "TEMPEST_HTTP_IMAGE=http://127.0.0.1/static/dashboard/img/favicon.ico" >> "$localrc_file"
+        # specify the TEMPEST_HTTP_IMAGE address that's in infra on a
+        # service we need to be up for anything to work anyway.
+        echo "TEMPEST_HTTP_IMAGE=http://git.openstack.org/static/openstack.png" >> "$localrc_file"
     fi
 
     if [[ "$DEVSTACK_GATE_TEMPEST_DISABLE_TENANT_ISOLATION" -eq "1" ]]; then
@@ -433,7 +523,7 @@ if [[ -n "$DEVSTACK_GATE_GRENADE" ]]; then
         export DEVSTACK_GATE_NEUTRON=0
     fi
     cd $BASE/old/devstack
-    setup_localrc "old" "$GRENADE_OLD_BRANCH" "localrc" "primary"
+    setup_localrc "old" "localrc" "primary"
 
     if [[ "$DEVSTACK_GATE_GRENADE" == "sideways-ironic" ]]; then
         # Set ironic and virt driver settings to those initially set
@@ -446,7 +536,7 @@ if [[ -n "$DEVSTACK_GATE_GRENADE" ]]; then
         export DEVSTACK_GATE_NEUTRON=$TMP_DEVSTACK_GATE_NEUTRON
     fi
     cd $BASE/new/devstack
-    setup_localrc "new" "$GRENADE_OLD_BRANCH" "localrc" "primary"
+    setup_localrc "new" "localrc" "primary"
 
     cat <<EOF >$BASE/new/grenade/localrc
 BASE_RELEASE=old
@@ -479,79 +569,45 @@ EOF
         echo "$GRENADE_PLUGINRC" >>$BASE/new/grenade/pluginrc
     fi
 
+    if [[ "$DEVSTACK_GATE_TOPOLOGY" == "multinode" ]]; then
+        echo -e "[[post-config|\$NOVA_CONF]]\n[libvirt]\ncpu_mode=custom\ncpu_model=gate64" >> local.conf
+        # this pins everything to the rpc version of the stable side
+        echo -e "[upgrade_levels]\ncompute=$(basename $GRENADE_OLD_BRANCH)" >> local.conf
+        # get this in our base config
+        cp local.conf $BASE/old/devstack
+
+        setup_multinode_connectivity "grenade"
+
+        # build the post-stack.sh config, this will be run as stack user so no sudo required
+        cat > $BASE/new/grenade/post-stack.sh <<EOF
+#!/bin/bash
+
+set -x
+
+$ANSIBLE subnodes -f 5 -i "$WORKSPACE/inventory" -m shell \
+        -a "cd '$BASE/old/devstack' && stdbuf -oL -eL ./stack.sh"
+EOF
+        sudo chmod a+x $BASE/new/grenade/post-stack.sh
+    fi
+
     # Make the workspace owned by the stack user
     # It is not clear if the ansible file module can do this for us
     $ANSIBLE all --sudo -f 5 -i "$WORKSPACE/inventory" -m shell \
         -a "chown -R stack:stack '$BASE'"
 
-    cd $BASE/new/grenade
     echo "Running grenade ..."
     echo "This takes a good 30 minutes or more"
+    cd $BASE/new/grenade
     sudo -H -u stack stdbuf -oL -eL ./grenade.sh
     cd $BASE/new/devstack
 
 else
     cd $BASE/new/devstack
-    setup_localrc "new" "$OVERRIDE_ZUUL_BRANCH" "localrc" "primary"
+    setup_localrc "new" "localrc" "primary"
 
     if [[ "$DEVSTACK_GATE_TOPOLOGY" != "aio" ]]; then
-        set -x  # for now enabling debug and do not turn it off
         echo -e "[[post-config|\$NOVA_CONF]]\n[libvirt]\ncpu_mode=custom\ncpu_model=gate64" >> local.conf
-        setup_localrc "new" "$OVERRIDE_ZUUL_BRANCH" "sub_localrc" "sub"
-        PRIMARY_NODE=`cat /etc/nodepool/primary_node_private`
-        SUB_NODES=`cat /etc/nodepool/sub_nodes_private`
-        if [[ "$DEVSTACK_GATE_NEUTRON" -ne '1' ]]; then
-            # TODO (clarkb): figure out how to make bridge setup sane with ansible.
-            ovs_gre_bridge "br_pub" $PRIMARY_NODE "True" 1 \
-                $FLOATING_HOST_PREFIX $FLOATING_HOST_MASK \
-                $SUB_NODES
-            ovs_gre_bridge "br_flat" $PRIMARY_NODE "False" 128 \
-                $SUB_NODES
-            cat <<EOF >>"$BASE/new/devstack/sub_localrc"
-FLAT_INTERFACE=br_flat
-PUBLIC_INTERFACE=br_pub
-MULTI_HOST=True
-EOF
-            cat <<EOF >>"$BASE/new/devstack/localrc"
-FLAT_INTERFACE=br_flat
-PUBLIC_INTERFACE=br_pub
-MULTI_HOST=True
-EOF
-        elif [[ "$DEVSTACK_GATE_NEUTRON_DVR" -eq '1' ]]; then
-            ovs_gre_bridge "br-ex" $PRIMARY_NODE "True" 1 \
-                $FLOATING_HOST_PREFIX $FLOATING_HOST_MASK \
-                $SUB_NODES
-        fi
-
-        echo "Preparing cross node connectivity"
-        setup_ssh $BASE/new/.ssh
-        setup_ssh ~root/.ssh
-        # TODO (clarkb) ansiblify the /etc/hosts and known_hosts changes
-        # set up ssh_known_hosts by IP and /etc/hosts
-        for NODE in $SUB_NODES; do
-            ssh-keyscan $NODE >> /tmp/tmp_ssh_known_hosts
-            echo $NODE `remote_command $NODE hostname | tr -d '\r'` >> /tmp/tmp_hosts
-        done
-        ssh-keyscan `cat /etc/nodepool/primary_node_private` >> /tmp/tmp_ssh_known_hosts
-        echo `cat /etc/nodepool/primary_node_private` `hostname` >> /tmp/tmp_hosts
-        cat /tmp/tmp_hosts | sudo tee --append /etc/hosts
-
-        # set up ssh_known_host files based on hostname
-        for HOSTNAME in `cat /tmp/tmp_hosts | cut -d' ' -f2`; do
-            ssh-keyscan $HOSTNAME >> /tmp/tmp_ssh_known_hosts
-        done
-        $ANSIBLE all --sudo -f 5 -i "$WORKSPACE/inventory" -m copy \
-            -a "src=/tmp/tmp_ssh_known_hosts dest=/etc/ssh/ssh_known_hosts mode=0444"
-
-        for NODE in $SUB_NODES; do
-            remote_copy_file /tmp/tmp_hosts $NODE:/tmp/tmp_hosts
-            remote_command $NODE "cat /tmp/tmp_hosts | sudo tee --append /etc/hosts > /dev/null"
-            cp sub_localrc /tmp/tmp_sub_localrc
-            echo "HOST_IP=$NODE" >> /tmp/tmp_sub_localrc
-            remote_copy_file /tmp/tmp_sub_localrc $NODE:$BASE/new/devstack/localrc
-            remote_copy_file local.conf $NODE:$BASE/new/devstack/local.conf
-        done
-
+        setup_multinode_connectivity
     fi
     # Make the workspace owned by the stack user
     # It is not clear if the ansible file module can do this for us

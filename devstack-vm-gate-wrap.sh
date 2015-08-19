@@ -201,10 +201,6 @@ export DEVSTACK_CINDER_SECURE_DELETE=${DEVSTACK_CINDER_SECURE_DELETE:-0}
 # Only applicable to master branch
 export DEVSTACK_GATE_NEUTRON=${DEVSTACK_GATE_NEUTRON:-0}
 
-# Set to 1 to run neutron with features that make it unstable
-# TODO(armax): get rid of this if as soon as bugs #1464612 and #1432189 get resolved
-export DEVSTACK_GATE_NEUTRON_UNSTABLE=${DEVSTACK_GATE_NEUTRON_UNSTABLE:-0}
-
 # Set to 1 to run neutron distributed virtual routing
 export DEVSTACK_GATE_NEUTRON_DVR=${DEVSTACK_GATE_NEUTRON_DVR:-0}
 
@@ -366,6 +362,11 @@ export DEVSTACK_GATE_CLEAN_LOGS=${DEVSTACK_GATE_CLEAN_LOGS:-1}
 # Set this to the time in minutes that the gate test should be allowed
 # to run before being aborted (default 60).
 export DEVSTACK_GATE_TIMEOUT=${DEVSTACK_GATE_TIMEOUT:-60}
+
+# Set to 1 to remove the stack users blanket sudo permissions forcing
+# openstack services running as the stack user to rely on rootwrap rulesets
+# instead of raw sudo. Do this to ensure rootwrap works. This is the default.
+export DEVSTACK_GATE_REMOVE_STACK_SUDO=${DEVSTACK_GATE_REMOVE_STACK_SUDO:-1}
 
 # Set to 1 to unstack immediately after devstack installation.  This
 # is intended to be a stop-gap until devstack can support

@@ -214,12 +214,7 @@ function setup_localrc {
 
     if [[ "$DEVSTACK_GATE_NEUTRON" -eq "1" ]]; then
         echo "Q_USE_DEBUG_COMMAND=True" >>"$localrc_file"
-        echo "NETWORK_GATEWAY=10.$LAST_OCTET.0.1" >>"$localrc_file"
-        # TODO(armax): get rid of this if as soon as bugs #1464612 and #1432189 get resolved
-        if [[ "$DEVSTACK_GATE_NEUTRON_UNSTABLE" -eq "0" ]]; then
-            echo "MYSQL_DRIVER=MySQL-python" >>"$localrc_file"
-            echo "API_WORKERS=0" >>"$localrc_file"
-        fi
+        echo "NETWORK_GATEWAY=10.1.0.1" >>"$localrc_file"
     fi
 
     if [[ "$DEVSTACK_GATE_NEUTRON_DVR" -eq "1" ]]; then
@@ -286,14 +281,6 @@ LIBS_FROM_GIT=$DEVSTACK_PROJECT_FROM_GIT
 ZAQAR_BACKEND=$DEVSTACK_GATE_ZAQAR_BACKEND
 DATABASE_QUERY_LOGGING=True
 EOF
-
-    # TODO(jeblair): Remove when this has been added to jobs in
-    # project-config. It's *super important* that this happens after
-    # DEST is set, as enable_plugin uses DEST value
-    if [[ ",$MY_ENABLED_SERVICES," =~ ,trove, ]]; then
-        echo "enable_plugin trove https://github.com/tesora/tesora-trove $localrc_branch" >>"$localrc_file"
-    fi
-
 
     if [[ "$DEVSTACK_CINDER_SECURE_DELETE" -eq "0" ]]; then
         echo "CINDER_SECURE_DELETE=False" >>"$localrc_file"
@@ -672,9 +659,11 @@ if [[ "$DEVSTACK_GATE_UNSTACK" -eq "1" ]]; then
         -a "cd '$BASE/new/devstack' && sudo -H -u stack ./unstack.sh"
 fi
 
-echo "Removing sudo privileges for devstack user"
-$ANSIBLE all --sudo -f 5 -i "$WORKSPACE/inventory" -m file \
-    -a "path=/etc/sudoers.d/50_stack_sh state=absent"
+if [[ "$DEVSTACK_GATE_REMOVE_STACK_SUDO" -eq 1 ]]; then
+    echo "Removing sudo privileges for devstack user"
+    $ANSIBLE all --sudo -f 5 -i "$WORKSPACE/inventory" -m file \
+        -a "path=/etc/sudoers.d/50_stack_sh state=absent"
+fi
 
 if [[ "$DEVSTACK_GATE_EXERCISES" -eq "1" ]]; then
     echo "Running devstack exercises"

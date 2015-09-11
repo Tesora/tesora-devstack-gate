@@ -33,10 +33,13 @@ source $TOP_DIR/functions.sh
 echo $PPID > $WORKSPACE/gate.pid
 source `dirname "$(readlink -f "$0")"`/functions.sh
 
-IP=`hostname  -I | cut -f1 -d' '`
-LAST_OCTET="${IP##*.}"
+UNIQUE_OCTETS=$(hostname -I | sed 's/[0-9]*\.[0-9]*\.[0-9]*\.1\b//g' | sed 's/[0-9a-z][0-9a-z]*:.*:[0-9a-z][0-9a-z]*//g' | sed 's/ /\n/g' | sed '/^$/d' | sort -bu | head -1 | cut -d'.' -f 3-4)
 
-FIXED_RANGE=${DEVSTACK_GATE_FIXED_RANGE:-10.$LAST_OCTET.0.0/20}
+# for testing.  Back to default, but enable nat
+UNIQUE_OCTETS="1.0"
+sudo iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
+
+FIXED_RANGE=${DEVSTACK_GATE_FIXED_RANGE:-10.$UNIQUE_OCTETS.0/20}
 FLOATING_RANGE=${DEVSTACK_GATE_FLOATING_RANGE:-172.24.5.0/24}
 PUBLIC_NETWORK_GATEWAY=${DEVSTACK_GATE_PUBLIC_NETWORK_GATEWAY:-172.24.5.1}
 # The next two values are used in multinode testing and are related

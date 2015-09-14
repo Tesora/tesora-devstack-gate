@@ -38,6 +38,7 @@ UNIQUE_OCTETS=$(hostname -I | sed 's/[0-9]*\.[0-9]*\.[0-9]*\.1\b//g' | sed 's/[0
 
 # nat everything going out eth0
 sudo iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
+sudo iptables-save
 
 FIXED_RANGE=${DEVSTACK_GATE_FIXED_RANGE:-10.1.0.0/20}
 FLOATING_RANGE=${DEVSTACK_GATE_FLOATING_RANGE:-172.24.5.0/24}

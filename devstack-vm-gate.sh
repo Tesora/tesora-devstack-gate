@@ -33,7 +33,6 @@ source $TOP_DIR/functions.sh
 echo $PPID > $WORKSPACE/gate.pid
 source `dirname "$(readlink -f "$0")"`/functions.sh
 
-# Currently, unused
 UNIQUE_OCTETS=$(hostname -I | sed 's/[0-9]*\.[0-9]*\.[0-9]*\.1\b//g' | sed 's/[0-9a-z][0-9a-z]*:.*:[0-9a-z][0-9a-z]*//g' | sed 's/ /\n/g' | sed '/^$/d' | sort -bu | head -1 | cut -d'.' -f 3-4)
 
 # nat everything going out eth0
@@ -42,6 +41,7 @@ sudo iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
 FIXED_RANGE=${DEVSTACK_GATE_FIXED_RANGE:-10.$UNIQUE_OCTETS.0/24}
 FLOATING_RANGE=${DEVSTACK_GATE_FLOATING_RANGE:-172.24.5.0/24}
 PUBLIC_NETWORK_GATEWAY=${DEVSTACK_GATE_PUBLIC_NETWORK_GATEWAY:-172.24.5.1}
+FIXED_NETWORK_SIZE=${DEVSTACK_GATE_FIXED_NETWORK_SIZE:-256}
 # The next two values are used in multinode testing and are related
 # to the floating range. For multinode test envs to know how to route
 # packets to floating IPs on other hosts we put addresses on the compute
@@ -264,7 +264,7 @@ VERBOSE=True
 FIXED_RANGE=$FIXED_RANGE
 FLOATING_RANGE=$FLOATING_RANGE
 PUBLIC_NETWORK_GATEWAY=$PUBLIC_NETWORK_GATEWAY
-FIXED_NETWORK_SIZE=4096
+FIXED_NETWORK_SIZE=$FIXED_NETWORK_SIZE
 VIRT_DRIVER=$DEVSTACK_GATE_VIRT_DRIVER
 SWIFT_REPLICAS=1
 LOG_COLOR=False

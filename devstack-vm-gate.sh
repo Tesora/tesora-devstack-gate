@@ -39,7 +39,7 @@ UNIQUE_OCTETS=$(hostname -I | sed 's/[0-9]*\.[0-9]*\.[0-9]*\.1\b//g' | sed 's/[0
 # nat everything going out eth0
 sudo iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
 
-FIXED_RANGE=${DEVSTACK_GATE_FIXED_RANGE:-10.1.0.0/20}
+FIXED_RANGE=${DEVSTACK_GATE_FIXED_RANGE:-10.$UNIQUE_OCTETS.0/20}
 FLOATING_RANGE=${DEVSTACK_GATE_FLOATING_RANGE:-172.24.5.0/24}
 PUBLIC_NETWORK_GATEWAY=${DEVSTACK_GATE_PUBLIC_NETWORK_GATEWAY:-172.24.5.1}
 # The next two values are used in multinode testing and are related
@@ -217,7 +217,7 @@ function setup_localrc {
 
     if [[ "$DEVSTACK_GATE_NEUTRON" -eq "1" ]]; then
         echo "Q_USE_DEBUG_COMMAND=True" >>"$localrc_file"
-        echo "NETWORK_GATEWAY=10.1.0.1" >>"$localrc_file"
+        echo "NETWORK_GATEWAY=10.$UNIQUE_OCTETS.1" >>"$localrc_file"
     fi
 
     if [[ "$DEVSTACK_GATE_NEUTRON_DVR" -eq "1" ]]; then

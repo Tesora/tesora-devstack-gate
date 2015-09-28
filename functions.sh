@@ -20,9 +20,15 @@ SUDO="sudo"
 
 # Distro check functions
 function is_fedora {
-    # note we consider CentOS 7 as fedora for now
-    lsb_release -i 2>/dev/null | grep -iq "fedora" || \
-        lsb_release -i 2>/dev/null | grep -iq "CentOS"
+    # note this is a little mis-named, we consider basically anything
+    # using RPM as "is_fedora".  This includes centos7, fedora &
+    # related distros like CloudOS and OracleLinux (note, we don't
+    # support centos6 with this script -- we are assuming is_fedora
+    # implies >=centos7 features such as systemd/journal, etc).
+    #
+    # This is KISS; if we need more fine-grained differentiation we
+    # will handle it later.
+    rpm -qf /etc/*-release >&/dev/null
 }
 
 function is_ubuntu {
@@ -1069,4 +1075,13 @@ function ovs_gre_bridge {
                 dev ${bridge_name}
         fi
     done
+}
+
+# Timeout hook calls implemented as bash functions. Note this
+# forks and execs a new bash in order to use the timeout utility
+# which cannot operate on bash functions directly.
+function with_timeout {
+    local cmd=$@
+    remaining_time
+    timeout -s 9 ${REMAINING_TIME}m bash -c "source $WORKSPACE/devstack-gate/functions.sh && $cmd"
 }

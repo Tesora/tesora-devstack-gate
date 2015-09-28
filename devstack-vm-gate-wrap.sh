@@ -205,11 +205,6 @@ export DEVSTACK_GATE_SAHARA=${DEVSTACK_GATE_SAHARA:-0}
 # Set to 1 to run trove
 export DEVSTACK_GATE_TROVE=${DEVSTACK_GATE_TROVE:-0}
 
-# Set to 1 to run marconi/zaqar
-# TODO remove marconi when safe to do so
-export DEVSTACK_GATE_MARCONI=${DEVSTACK_GATE_MARCONI:-0}
-export DEVSTACK_GATE_ZAQAR=${DEVSTACK_GATE_ZAQAR:-0}
-
 # Set to 0 to disable config_drive and use the metadata server instead
 export DEVSTACK_GATE_CONFIGDRIVE=${DEVSTACK_GATE_CONFIGDRIVE:-1}
 
@@ -361,9 +356,6 @@ export OVERRIDE_ZUUL_BRANCH=${OVERRIDE_ZUUL_BRANCH:-$ZUUL_BRANCH}
 # postgresql, mongodb.
 export DEVSTACK_GATE_CEILOMETER_BACKEND=${DEVSTACK_GATE_CEILOMETER_BACKEND:-mysql}
 
-# Set Zaqar backend to override the default one. It could be mongodb, redis.
-export DEVSTACK_GATE_ZAQAR_BACKEND=${DEVSTACK_GATE_ZAQAR_BACKEND:-mongodb}
-
 # The topology of the system determinates the service distribution
 # among the nodes.
 # aio: `all in one` just only one node used
@@ -409,9 +401,9 @@ fi
 if ! function_exists "gate_hook"; then
     # the command we use to run the gate
     function gate_hook {
-        remaining_time
-        timeout -s 9 ${REMAINING_TIME}m $BASE/new/devstack-gate/devstack-vm-gate.sh
+        $BASE/new/devstack-gate/devstack-vm-gate.sh
     }
+    export -f gate_hook
 fi
 
 echo "Triggered by: https://review.openstack.org/$ZUUL_CHANGE patchset $ZUUL_PATCHSET"
@@ -527,11 +519,11 @@ fi
 # Note that hooks should be multihost aware if necessary.
 # devstack-vm-gate-wrap.sh will not automagically run the hooks on each node.
 # Run pre test hook if we have one
-call_hook_if_defined "pre_test_hook"
+with_timeout call_hook_if_defined "pre_test_hook"
 
 # Run the gate function
 echo "Running gate_hook"
-gate_hook
+with_timeout "gate_hook"
 GATE_RETVAL=$?
 RETVAL=$GATE_RETVAL
 
@@ -545,7 +537,7 @@ fi
 # Run post test hook if we have one
 if [ $GATE_RETVAL -eq 0 ]; then
     # Run post_test_hook if we have one
-    call_hook_if_defined "post_test_hook"
+    with_timeout call_hook_if_defined "post_test_hook"
     RETVAL=$?
 fi
 

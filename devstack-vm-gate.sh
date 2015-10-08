@@ -33,7 +33,7 @@ source $TOP_DIR/functions.sh
 echo $PPID > $WORKSPACE/gate.pid
 source `dirname "$(readlink -f "$0")"`/functions.sh
 
-UNIQUE_OCTETS=$(hostname -I | sed 's/[0-9]*\.[0-9]*\.[0-9]*\.1\b//g' | sed 's/[0-9a-z][0-9a-z]*:.*:[0-9a-z][0-9a-z]*//g' | sed 's/ /\n/g' | sed '/^$/d' | sort -bu | head -1 | cut -d'.' -f 3-4)
+UNIQUE_OCTETS=$(hostname -I | sed 's/[0-9a-z][0-9a-z]*:.*:[0-9a-z][0-9a-z]*//g' | sed 's/ /\n/g' | sed '/^$/d' | sort -bu | head -1 | cut -d'.' -f 3-4)
 
 FIXED_RANGE=${DEVSTACK_GATE_FIXED_RANGE:-10.$UNIQUE_OCTETS.0/24}
 FLOATING_RANGE=${DEVSTACK_GATE_FLOATING_RANGE:-172.24.5.0/24}

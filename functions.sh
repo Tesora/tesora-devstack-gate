@@ -447,6 +447,8 @@ function setup_project {
                 branch="stable/kilo"
             elif [ "$branch" == "dev/EE-1.5" ]; then
                 branch="stable/kilo"
+            elif [ "$branch" == "dev/EE-1.6" ]; then
+                branch="stable/liberty"
             elif [ "$branch" == "stable/EE-1.5" ]; then
                 branch="stable/kilo"
             fi

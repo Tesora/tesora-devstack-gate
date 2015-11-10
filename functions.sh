@@ -449,6 +449,13 @@ function setup_project {
                 branch="stable/kilo"
             elif [ "$branch" == "dev/EE-1.6" ]; then
                 branch="stable/liberty"
+            elif [ "$branch" == "dev/CE-1.6" ]; then
+                branch="stable/liberty"
+            elif [ "$branch" == "dev/EE-1.7" ]; then
+                branch="stable/liberty"
+            elif [ "$branch" == "dev/EE-1.8" ]; then
+                # eventually, branch="stable/mitaka"
+                branch="master"
             elif [ "$branch" == "stable/EE-1.5" ]; then
                 branch="stable/kilo"
             fi

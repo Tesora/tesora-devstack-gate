@@ -6,7 +6,10 @@ config:
     EE-1.4: [default, ceilometer, glance, horizon, nova, swift, cinder, keystone, heat]
     EE-1.5: [default, ceilometer, glance, horizon, nova, swift, cinder, keystone, heat]
     EE-1.6: [default, ceilometer, glance, horizon, nova, swift, cinder, keystone]
+    EE-1.7: [default, ceilometer, glance, horizon, nova, swift, cinder, keystone]
+    EE-1.8: [default, ceilometer, glance, horizon, nova, swift, cinder, keystone]
     CE-1.4: [default, ceilometer, glance, horizon, nova, swift, cinder, keystone, heat]
+    CE-1.6: [default, ceilometer, glance, horizon, nova, swift, cinder, keystone]
     juno: [default, ceilometer, glance, horizon, nova, swift, cinder, keystone]
     icehouse: [default, ceilometer, glance, horizon, nova, swift, cinder, keystone]
     # This can be used by functional jobs that only want their dependencies installed
@@ -52,7 +55,7 @@ branches:
   # The value of ""default" is the name of the "trunk" branch
   default: master
   # Normalized branch names only here, e.g. stable/icehouse => icehouse
-  allowed: [master, liberty, kilo, juno, icehouse, EE-1.4, EE-1.5, EE-1.6, CE-1.4]
+  allowed: [master, liberty, kilo, juno, icehouse, EE-1.4, EE-1.5, EE-1.6, EE-1.7, EE-1.8, CE-1.4, CE-1.6]
 
 features:
   default:

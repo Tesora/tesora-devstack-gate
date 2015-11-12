@@ -36,9 +36,6 @@ PROJECTS="openstack-infra/devstack-gate $PROJECTS"
 PROJECTS="openstack-dev/devstack $PROJECTS"
 PROJECTS="openstack-dev/grenade $PROJECTS"
 PROJECTS="openstack-dev/pbr $PROJECTS"
-PROJECTS="openstack-infra/jeepyb $PROJECTS"
-PROJECTS="openstack-infra/os-loganalyze $PROJECTS"
-PROJECTS="openstack-infra/pypi-mirror $PROJECTS"
 PROJECTS="openstack-infra/tripleo-ci $PROJECTS"
 PROJECTS="openstack/automaton $PROJECTS"
 PROJECTS="openstack/ceilometer $PROJECTS"
@@ -123,6 +120,10 @@ PROJECTS="openstack/tripleo-image-elements $PROJECTS"
 PROJECTS="openstack/tripleo-incubator $PROJECTS"
 PROJECTS="openstack/trove $PROJECTS"
 
+# Remove duplicates as they result in errors when managing
+# git state.
+PROJECTS=$(echo $PROJECTS | tr '[:space:]' '\n' | sort -u)
+
 
 export BASE=/opt/stack
 
@@ -205,11 +206,6 @@ export DEVSTACK_GATE_SAHARA=${DEVSTACK_GATE_SAHARA:-0}
 # Set to 1 to run trove
 export DEVSTACK_GATE_TROVE=${DEVSTACK_GATE_TROVE:-0}
 
-# Set to 1 to run marconi/zaqar
-# TODO remove marconi when safe to do so
-export DEVSTACK_GATE_MARCONI=${DEVSTACK_GATE_MARCONI:-0}
-export DEVSTACK_GATE_ZAQAR=${DEVSTACK_GATE_ZAQAR:-0}
-
 # Set to 0 to disable config_drive and use the metadata server instead
 export DEVSTACK_GATE_CONFIGDRIVE=${DEVSTACK_GATE_CONFIGDRIVE:-1}
 
@@ -251,6 +247,21 @@ if [[ -n "$DEVSTACK_GATE_GRENADE" ]]; then
     # All grenade upgrades get tempest
     export DEVSTACK_GATE_TEMPEST=1
 
+    # NOTE(sdague): Adjusting grenade branches for a release.
+    #
+    # When we get to the point of the release where we should adjust
+    # the grenade branches, the order of doing so is important.
+    #
+    # 1. stable/foo on all projects in devstack
+    # 2. stable/foo on devstack
+    # 3. stable/foo on grenade
+    # 4. adjust branches in devstack-gate
+    #
+    # The devstack-gate branch logic going last means that it will be
+    # tested before thrust upon the jobs. For both the stable/kilo and
+    # stable/liberty releases real release issues were found in this
+    # process. So this should be done as early as possible.
+
     case $DEVSTACK_GATE_GRENADE in
 
         # sideways upgrades try to move between configurations in the
@@ -272,6 +283,9 @@ if [[ -n "$DEVSTACK_GATE_GRENADE" ]]; then
                 export GRENADE_NEW_BRANCH="stable/kilo"
             elif [[ "$GRENADE_BASE_BRANCH" == "stable/kilo" ]]; then
                 export GRENADE_OLD_BRANCH="stable/kilo"
+                export GRENADE_NEW_BRANCH="stable/liberty"
+            elif [[ "$GRENADE_BASE_BRANCH" == "stable/liberty" ]]; then
+                export GRENADE_OLD_BRANCH="stable/liberty"
                 export GRENADE_NEW_BRANCH="$GIT_BRANCH"
             fi
             ;;
@@ -296,8 +310,14 @@ if [[ -n "$DEVSTACK_GATE_GRENADE" ]]; then
             elif [[ "$GRENADE_BASE_BRANCH" == "stable/kilo" ]]; then
                 export GRENADE_OLD_BRANCH="stable/juno"
                 export GRENADE_NEW_BRANCH="stable/kilo"
+            elif [[ "$GRENADE_BASE_BRANCH" == "stable/liberty" ]]; then
+                export GRENADE_OLD_BRANCH="stable/kilo"
+                export GRENADE_NEW_BRANCH="stable/liberty"
+            elif [[ "$GRENADE_BASE_BRANCH" == "dev/EE-1.6" ]]; then
+                export GRENADE_OLD_BRANCH="dev/EE-1.4"
+                export GRENADE_NEW_BRANCH="dev/EE-1.6"
             else # master
-                export GRENADE_OLD_BRANCH="dev/EE-1.5"
+                export GRENADE_OLD_BRANCH="dev/EE-1.6"
                 export GRENADE_NEW_BRANCH="$GIT_BRANCH"
             fi
             ;;
@@ -324,6 +344,9 @@ export DEVSTACK_GATE_TEMPEST_ALL=${DEVSTACK_GATE_TEMPEST_ALL:-0}
 
 # Set to a regex to run tempest with a custom regex filter
 export DEVSTACK_GATE_TEMPEST_REGEX=${DEVSTACK_GATE_TEMPEST_REGEX:-""}
+
+# Set to 1 to run all-plugin tempest tests
+export DEVSTACK_GATE_TEMPEST_ALL_PLUGINS=${DEVSTACK_GATE_TEMPEST_ALL_PLUGINS:-0}
 
 # Set to 1 if running the openstack/requirements integration test
 export DEVSTACK_GATE_REQS_INTEGRATION=${DEVSTACK_GATE_REQS_INTEGRATION:-0}
@@ -360,9 +383,6 @@ export OVERRIDE_ZUUL_BRANCH=${OVERRIDE_ZUUL_BRANCH:-$ZUUL_BRANCH}
 # Set Ceilometer backend to override the default one. It could be mysql,
 # postgresql, mongodb.
 export DEVSTACK_GATE_CEILOMETER_BACKEND=${DEVSTACK_GATE_CEILOMETER_BACKEND:-mysql}
-
-# Set Zaqar backend to override the default one. It could be mongodb, redis.
-export DEVSTACK_GATE_ZAQAR_BACKEND=${DEVSTACK_GATE_ZAQAR_BACKEND:-mongodb}
 
 # The topology of the system determinates the service distribution
 # among the nodes.
@@ -409,9 +429,9 @@ fi
 if ! function_exists "gate_hook"; then
     # the command we use to run the gate
     function gate_hook {
-        remaining_time
-        timeout -s 9 ${REMAINING_TIME}m $BASE/new/devstack-gate/devstack-vm-gate.sh
+        $BASE/new/devstack-gate/devstack-vm-gate.sh
     }
+    export -f gate_hook
 fi
 
 echo "Triggered by: https://review.openstack.org/$ZUUL_CHANGE patchset $ZUUL_PATCHSET"
@@ -486,6 +506,7 @@ $ANSIBLE all -f 5 -i "$WORKSPACE/inventory" -m shell \
     -a "$(run_command setup_host)" &> "$WORKSPACE/logs/devstack-gate-setup-host.txt"
 
 if [ -n "$DEVSTACK_GATE_GRENADE" ]; then
+    start=$(date +%s)
     echo "Setting up the new (migrate to) workspace"
     echo "... this takes 3 - 5 minutes (logs at logs/devstack-gate-setup-workspace-new.txt.gz)"
     $ANSIBLE all -f 5 -i "$WORKSPACE/inventory" -m shell \
@@ -496,12 +517,23 @@ if [ -n "$DEVSTACK_GATE_GRENADE" ]; then
     $ANSIBLE all -f 5 -i "$WORKSPACE/inventory" -m shell \
         -a "$(run_command setup_workspace '$GRENADE_OLD_BRANCH' '$BASE/old')" \
         &> "$WORKSPACE/logs/devstack-gate-setup-workspace-old.txt"
+    end=$(date +%s)
+    took=$((($end - $start) / 60))
+    if [[ "$took" -gt 20 ]]; then
+        echo "WARNING: setup of 2 workspaces took > 20 minutes, this is a very slow node."
+    fi
 else
     echo "Setting up the workspace"
     echo "... this takes 3 - 5 minutes (logs at logs/devstack-gate-setup-workspace-new.txt.gz)"
+    start=$(date +%s)
     $ANSIBLE all -f 5 -i "$WORKSPACE/inventory" -m shell \
         -a "$(run_command setup_workspace '$OVERRIDE_ZUUL_BRANCH' '$BASE/new')" \
         &> "$WORKSPACE/logs/devstack-gate-setup-workspace-new.txt"
+    end=$(date +%s)
+    took=$((($end - $start) / 60))
+    if [[ "$took" -gt 10 ]]; then
+        echo "WARNING: setup workspace took > 10 minutes, this is a very slow node."
+    fi
 fi
 
 # relocate and symlink logs into $BASE to save space on the root filesystem
@@ -527,11 +559,11 @@ fi
 # Note that hooks should be multihost aware if necessary.
 # devstack-vm-gate-wrap.sh will not automagically run the hooks on each node.
 # Run pre test hook if we have one
-call_hook_if_defined "pre_test_hook"
+with_timeout call_hook_if_defined "pre_test_hook"
 
 # Run the gate function
 echo "Running gate_hook"
-gate_hook
+with_timeout "gate_hook"
 GATE_RETVAL=$?
 RETVAL=$GATE_RETVAL
 
@@ -545,7 +577,7 @@ fi
 # Run post test hook if we have one
 if [ $GATE_RETVAL -eq 0 ]; then
     # Run post_test_hook if we have one
-    call_hook_if_defined "post_test_hook"
+    with_timeout call_hook_if_defined "post_test_hook"
     RETVAL=$?
 fi
 

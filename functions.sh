@@ -20,9 +20,15 @@ SUDO="sudo"
 
 # Distro check functions
 function is_fedora {
-    # note we consider CentOS 7 as fedora for now
-    lsb_release -i 2>/dev/null | grep -iq "fedora" || \
-        lsb_release -i 2>/dev/null | grep -iq "CentOS"
+    # note this is a little mis-named, we consider basically anything
+    # using RPM as "is_fedora".  This includes centos7, fedora &
+    # related distros like CloudOS and OracleLinux (note, we don't
+    # support centos6 with this script -- we are assuming is_fedora
+    # implies >=centos7 features such as systemd/journal, etc).
+    #
+    # This is KISS; if we need more fine-grained differentiation we
+    # will handle it later.
+    rpm -qf /etc/*-release >&/dev/null
 }
 
 function is_ubuntu {
@@ -55,7 +61,7 @@ function apt_get_install {
         APT_UPDATED=1
     fi
 
-    sudo apt-get --assume-yes install $@
+    sudo DEBIAN_FRONTEND=noninteractive apt-get --assume-yes install $@
 }
 
 function call_hook_if_defined {
@@ -350,16 +356,14 @@ function fix_disk_layout {
             fi
             sudo parted ${DEV} --script -- mklabel msdos
             sudo parted ${DEV} --script -- mkpart primary linux-swap 1 8192
-            sudo parted ${DEV} --script -- mkpart primary ext2 8192 32768
-            sudo parted ${DEV} --script -- mkpart primary ext2 32768 -1
-            sudo mkswap $swap
-            sudo vgcreate stack-volumes-lvmdriver-1 $lvmvol
-            sudo mkfs.ext4 $optdev
-            sudo swapon $swap
-            sudo mount $optdev /mnt
+            sudo parted ${DEV} --script -- mkpart primary ext2 8192 -1
+            sudo mkswap ${DEV}1
+            sudo mkfs.ext4 ${DEV}2
+            sudo swapon ${DEV}1
+            sudo mount ${DEV}2 /mnt
             sudo find /opt/ -mindepth 1 -maxdepth 1 -exec mv {} /mnt/ \;
             sudo umount /mnt
-            sudo mount $optdev /opt
+            sudo mount ${DEV}2 /opt
         fi
     fi
 
@@ -506,8 +510,8 @@ function setup_project {
 function setup_workspace {
     local base_branch=$1
     local DEST=$2
-    local copy_cache=$3
     local xtrace=$(set +o | grep xtrace)
+    local cache_dir=$BASE/cache/files/
 
     # Enabled detailed logging, since output of this function is redirected
     set -o xtrace
@@ -539,15 +543,19 @@ function setup_workspace {
     # It's important we are back at DEST for the rest of the script
     cd $DEST
 
-    if [ -n "$copy_cache" ] ; then
-        # The vm template update job should cache some images in ~/cache.
-        # Move them to where devstack expects:
-        find ~/cache/files/ -mindepth 1 -maxdepth 1 -exec cp {} $DEST/devstack/files/ \;
-    else
-        # The vm template update job should cache some images in ~/cache.
-        # Move them to where devstack expects:
-        find ~/cache/files/ -mindepth 1 -maxdepth 1 -exec mv {} $DEST/devstack/files/ \;
+    # Populate the cache for devstack (this will typically be vm images)
+    #
+    # If it's still in home, move it to /opt, this will make sure we
+    # have the artifacts in the same filesystem as devstack.
+    if [ -d ~/cache/files ]; then
+        sudo mkdir -p $cache_dir
+        sudo chown -R jenkins:jenkins $cache_dir
+        find ~/cache/files/ -mindepth 1 -maxdepth 1 -exec mv {} $cache_dir \;
+        rm -rf ~/cache/files/
     fi
+
+    # copy them to where devstack expects with hardlinks to save space
+    find $cache_dir -mindepth 1 -maxdepth 1 -exec cp -l {} $DEST/devstack/files/ \;
 
     # Disable detailed logging as we return to the main script
     $xtrace
@@ -789,8 +797,20 @@ function cleanup_host {
             sudo cp $BASE/old/devstack/tempest.log $BASE/logs/old/verify_tempest_conf.log
         fi
 
+        # dstat CSV log
+        if [ -f $BASE/old/dstat-csv.log ]; then
+            sudo cp $BASE/old/dstat-csv.log $BASE/logs/old/
+        fi
+
         # grenade logs
         sudo cp $BASE/new/grenade/localrc $BASE/logs/grenade_localrc.txt
+
+        # grenade saved state files - resources created during upgrade tests
+        # use this directory to dump arbitrary configuration/state files.
+        if [ -d $BASE/save ]; then
+            sudo mkdir -p $BASE/logs/grenade_save
+            sudo cp -r $BASE/save/* $BASE/logs/grenade_save/
+        fi
 
         # grenade pluginrc - external grenade plugins use this file to
         # communicate with grenade, capture for posterity
@@ -840,6 +860,11 @@ function cleanup_host {
 
     # Copy tempest config file
     sudo cp $BASE/new/tempest/etc/tempest.conf $NEWLOGTARGET/tempest_conf.txt
+
+    # Copy dstat CSV log if it exists
+    if [ -f $BASE/new/dstat-csv.log ]; then
+        sudo cp $BASE/new/dstat-csv.log $BASE/logs/
+    fi
 
     sudo iptables-save > $WORKSPACE/iptables.txt
     df -h > $WORKSPACE/df.txt
@@ -1019,9 +1044,19 @@ function enable_netconsole {
 #   http://www.yet.org/2014/09/openvswitch-troubleshooting/
 #
 function ovs_gre_bridge {
+    if is_fedora; then
+        local ovs_package='openvswitch'
+        local ovs_service='openvswitch'
+    elif uses_debs; then
+        local ovs_package='openvswitch-switch'
+        local ovs_service='openvswitch-switch'
+    else
+        echo "Unsupported platform, can't determine ntp service"
+        exit 1
+    fi
     local install_ovs_deps="source $BASE/new/devstack/functions-common; \
-                            install_package openvswitch-switch; \
-                            restart_service openvswitch-switch"
+                            install_package ${ovs_package}; \
+                            restart_service ${ovs_service}"
     local mtu=1450
     local bridge_name=$1
     local host_ip=$2
@@ -1078,4 +1113,13 @@ function ovs_gre_bridge {
                 dev ${bridge_name}
         fi
     done
+}
+
+# Timeout hook calls implemented as bash functions. Note this
+# forks and execs a new bash in order to use the timeout utility
+# which cannot operate on bash functions directly.
+function with_timeout {
+    local cmd=$@
+    remaining_time
+    timeout -s 9 ${REMAINING_TIME}m bash -c "source $WORKSPACE/devstack-gate/functions.sh && $cmd"
 }

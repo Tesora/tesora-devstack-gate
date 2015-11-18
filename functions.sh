@@ -169,6 +169,44 @@ function remaining_time {
     fi
 }
 
+# Create a script to reproduce this build
+function reproduce {
+    cat > $WORKSPACE/logs/reproduce.sh <<EOF
+#!/bin/bash -xe
+
+exec 0</dev/null
+
+EOF
+
+    export | grep '\(DEVSTACK\|ZUUL\)' >> $WORKSPACE/logs/reproduce.sh
+
+    cat >> $WORKSPACE/logs/reproduce.sh <<EOF
+
+mkdir -p workspace/$JOB_NAME
+cd workspace/$JOB_NAME
+export WORKSPACE=\`pwd\`
+
+if [[ ! -e /usr/zuul-env ]]; then
+  virtualenv /usr/zuul-env
+  /usr/zuul-env/bin/pip install zuul
+fi
+
+cat > clonemap.yaml << IEOF
+clonemap:
+  - name: openstack-infra/devstack-gate
+    dest: devstack-gate
+IEOF
+
+/usr/zuul-env/bin/zuul-cloner -m clonemap.yaml --cache-dir /opt/git git://git.openstack.org openstack-infra/devstack-gate
+
+cp devstack-gate/devstack-vm-gate-wrap.sh ./safe-devstack-vm-gate-wrap.sh
+./safe-devstack-vm-gate-wrap.sh
+
+EOF
+
+    chmod a+x $WORKSPACE/logs/reproduce.sh
+}
+
 # indent the output of a command 4 spaces, useful for distinguishing
 # the output of a command from the command itself
 function indent {
@@ -524,7 +562,7 @@ function setup_workspace {
     fix_disk_layout
 
     sudo mkdir -p $DEST
-    sudo chown -R jenkins:jenkins $DEST
+    sudo chown -R $USER:$USER $DEST
 
     #TODO(jeblair): remove when this is no longer created by the image
     rm -fr ~/workspace-cache/
@@ -549,7 +587,7 @@ function setup_workspace {
     # have the artifacts in the same filesystem as devstack.
     if [ -d ~/cache/files ]; then
         sudo mkdir -p $cache_dir
-        sudo chown -R jenkins:jenkins $cache_dir
+        sudo chown -R $USER:$USER $cache_dir
         find ~/cache/files/ -mindepth 1 -maxdepth 1 -exec mv {} $cache_dir \;
         rm -rf ~/cache/files/
     fi
@@ -664,7 +702,7 @@ function archive_test_artifact {
     local filename=$1
 
     sudo gzip -9 $filename
-    sudo chown jenkins:jenkins $filename.gz
+    sudo chown $USER:$USER $filename.gz
     sudo chmod a+r $filename.gz
 }
 
@@ -905,8 +943,8 @@ function cleanup_host {
         sudo cp -r /var/log/openvswitch $BASE/logs/
     fi
 
-    # Make sure jenkins can read all the logs and configs
-    sudo chown -R jenkins:jenkins $BASE/logs/
+    # Make sure the current user can read all the logs and configs
+    sudo chown -R $USER:$USER $BASE/logs/
     sudo chmod a+r $BASE/logs/ $BASE/logs/etc
 
     # rename files to .txt; this is so that when displayed via
@@ -1122,4 +1160,9 @@ function with_timeout {
     local cmd=$@
     remaining_time
     timeout -s 9 ${REMAINING_TIME}m bash -c "source $WORKSPACE/devstack-gate/functions.sh && $cmd"
+}
+
+# Iniset imported from devstack
+function iniset {
+    $(source $BASE/new/devstack/inc/ini-config; iniset $@)
 }

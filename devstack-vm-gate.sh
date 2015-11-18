@@ -294,13 +294,6 @@ SWIFT_REPLICAS=1
 LOG_COLOR=False
 # Don't reset the requirements.txt files after g-r updates
 UNDO_REQUIREMENTS=False
-# Set to soft if the project is using libraries not in g-r
-# (pre-liberty)
-REQUIREMENTS_MODE=${REQUIREMENTS_MODE}
-# Set to False to disable the use of upper-constraints.txt
-# if you want to experience the wild freedom of uncapped
-# dependencies from PyPI
-USE_CONSTRAINTS=${USE_CONSTRAINTS}
 CINDER_PERIODIC_INTERVAL=10
 export OS_NO_CACHE=True
 CEILOMETER_BACKEND=$DEVSTACK_GATE_CEILOMETER_BACKEND
@@ -406,11 +399,6 @@ EOF
     fi
 
     if [[ "$DEVSTACK_GATE_TEMPEST" -eq "1" ]]; then
-        # We need to disable ratelimiting when running
-        # Tempest tests since so many requests are executed
-        # TODO(mriedem): Remove this when stable/juno is our oldest
-        # supported branch since devstack no longer uses it since Juno.
-        echo "API_RATE_LIMIT=False" >> "$localrc_file"
         # Volume tests in Tempest require a number of volumes
         # to be created, each of 1G size. Devstack's default
         # volume backing file size is 10G.
@@ -701,7 +689,7 @@ fi
 
 function load_subunit_stream {
     local stream=$1;
-    pushd /opt/stack/new/tempest/
+    pushd $BASE/new/tempest/
     sudo testr load --force-init $stream
     popd
 }
@@ -731,8 +719,18 @@ if [[ "$DEVSTACK_GATE_TEMPEST" -eq "1" ]]; then
         sudo chown -R tempest:stack $BASE/data/tempest
     fi
     # ensure the cirros image files are accessible
-    if [[ -d /opt/stack/new/devstack/files ]]; then
-        sudo chmod -R o+rx /opt/stack/new/devstack/files
+    if [[ -d $BASE/new/devstack/files ]]; then
+        sudo chmod -R o+rx $BASE/new/devstack/files
+    fi
+
+    # In the future we might want to increase the number of compute nodes. 
+    # This will ensure that multinode jobs consist of 2 nodes.
+    # As a part of tempest configuration, it should be executed
+    # before the DEVSTACK_GATE_TEMPEST_NOTESTS check, because the DEVSTACK_GATE_TEMPEST
+    # guarantees that tempest should be configured, no matter should
+    # tests be executed or not.
+    if [[ "$DEVSTACK_GATE_TOPOLOGY" == "multinode" ]]; then
+        iniset -sudo $BASE/new/tempest/etc/tempest.conf compute min_compute_nodes 2
     fi
 
     # if set, we don't need to run Tempest at all

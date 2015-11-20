@@ -317,7 +317,7 @@ if [[ -n "$DEVSTACK_GATE_GRENADE" ]]; then
                 export GRENADE_OLD_BRANCH="dev/EE-1.4"
                 export GRENADE_NEW_BRANCH="dev/EE-1.6"
             else # master
-                export GRENADE_OLD_BRANCH="dev/EE-1.6"
+                export GRENADE_OLD_BRANCH="dev/EE-1.7"
                 export GRENADE_NEW_BRANCH="$GIT_BRANCH"
             fi
             ;;

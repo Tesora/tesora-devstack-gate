@@ -73,10 +73,10 @@ function setup_nova_net_networking {
     # by default.
     # TODO (clarkb): figure out how to make bridge setup sane with ansible.
     ovs_gre_bridge "br_pub" $primary_node "True" 1 \
-                   $FLOATING_HOST_PREFIX $FLOATING_HOST_MASK \
-                   $sub_nodes
+                    $FLOATING_HOST_PREFIX $FLOATING_HOST_MASK \
+                    $sub_nodes
     ovs_gre_bridge "br_flat" $primary_node "False" 128 \
-                   $sub_nodes
+                    $sub_nodes
     cat <<EOF >>"$localrc"
 FLAT_INTERFACE=br_flat
 PUBLIC_INTERFACE=br_pub
@@ -125,8 +125,8 @@ MULTI_HOST=True
 EOF
     elif [[ "$DEVSTACK_GATE_NEUTRON_DVR" -eq '1' ]]; then
         ovs_gre_bridge "br-ex" $primary_node "True" 1 \
-                       $FLOATING_HOST_PREFIX $FLOATING_HOST_MASK \
-                       $sub_nodes
+                        $FLOATING_HOST_PREFIX $FLOATING_HOST_MASK \
+                        $sub_nodes
     fi
 
     echo "Preparing cross node connectivity"
@@ -148,7 +148,7 @@ EOF
     done
 
     $ANSIBLE all --sudo -f 5 -i "$WORKSPACE/inventory" -m copy \
-             -a "src=/tmp/tmp_ssh_known_hosts dest=/etc/ssh/ssh_known_hosts mode=0444"
+            -a "src=/tmp/tmp_ssh_known_hosts dest=/etc/ssh/ssh_known_hosts mode=0444"
 
     for NODE in $sub_nodes; do
         remote_copy_file /tmp/tmp_hosts $NODE:/tmp/tmp_hosts
@@ -299,6 +299,9 @@ export OS_NO_CACHE=True
 CEILOMETER_BACKEND=$DEVSTACK_GATE_CEILOMETER_BACKEND
 LIBS_FROM_GIT=$DEVSTACK_PROJECT_FROM_GIT
 DATABASE_QUERY_LOGGING=True
+# set this until all testing platforms have libvirt >= 1.2.11
+# see bug #1501558
+EBTABLES_RACE_FIX=True
 EOF
 
     if [[ "$DEVSTACK_CINDER_SECURE_DELETE" -eq "0" ]]; then
@@ -330,7 +333,7 @@ EOF
         echo "IRONIC_BAREMETAL_BASIC_OPS=True" >>"$localrc_file"
         echo "IRONIC_VM_LOG_DIR=$BASE/$localrc_oldnew/ironic-bm-logs" >>"$localrc_file"
         echo "DEFAULT_INSTANCE_TYPE=baremetal" >>"$localrc_file"
-        echo "BUILD_TIMEOUT=340" >>"$localrc_file"
+        echo "BUILD_TIMEOUT=400" >>"$localrc_file"
         echo "IRONIC_CALLBACK_TIMEOUT=300" >>"$localrc_file"
         echo "Q_AGENT=openvswitch" >>"$localrc_file"
         echo "Q_ML2_TENANT_NETWORK_TYPE=vxlan" >>"$localrc_file"
@@ -489,9 +492,9 @@ EOF
             fi
             echo "DATABASE_HOST=$primary_node" >>"$localrc_file"
             if [[ $original_enabled_services =~ "mysql" ]]; then
-                 echo "DATABASE_TYPE=mysql"  >>"$localrc_file"
+                echo "DATABASE_TYPE=mysql"  >>"$localrc_file"
             else
-                 echo "DATABASE_TYPE=postgresql"  >>"$localrc_file"
+                echo "DATABASE_TYPE=postgresql"  >>"$localrc_file"
             fi
             echo "GLANCE_HOSTPORT=$primary_node:9292" >>"$localrc_file"
             echo "Q_HOST=$primary_node" >>"$localrc_file"

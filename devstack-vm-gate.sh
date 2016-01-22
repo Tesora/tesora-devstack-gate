@@ -166,7 +166,11 @@ function setup_networking {
     # sauce to function.
     if [[ "$DEVSTACK_GATE_TOPOLOGY" != "multinode" ]] && \
         [[ "$DEVSTACK_GATE_NEUTRON" -ne '1' ]]; then
-        setup_nova_net_networking "localrc" "127.0.0.1"
+        local localrc=$BASE/new/devstack/localrc
+        if [[ "$mode" == "grenade" ]]; then
+            localrc=$BASE/new/grenade/devstack.localrc
+        fi
+        setup_nova_net_networking "$localrc" "127.0.0.1"
     elif [[ "$DEVSTACK_GATE_TOPOLOGY" == "multinode" ]]; then
         setup_multinode_connectivity $mode
     fi
@@ -329,12 +333,13 @@ EOF
     fi
 
     if [[ "$DEVSTACK_GATE_VIRT_DRIVER" == "ironic" ]]; then
+        export TEMPEST_OS_TEST_TIMEOUT=900
         echo "VIRT_DRIVER=ironic" >>"$localrc_file"
         echo "IRONIC_BAREMETAL_BASIC_OPS=True" >>"$localrc_file"
         echo "IRONIC_VM_LOG_DIR=$BASE/$localrc_oldnew/ironic-bm-logs" >>"$localrc_file"
         echo "DEFAULT_INSTANCE_TYPE=baremetal" >>"$localrc_file"
-        echo "BUILD_TIMEOUT=400" >>"$localrc_file"
-        echo "IRONIC_CALLBACK_TIMEOUT=300" >>"$localrc_file"
+        echo "BUILD_TIMEOUT=600" >>"$localrc_file"
+        echo "IRONIC_CALLBACK_TIMEOUT=600" >>"$localrc_file"
         echo "Q_AGENT=openvswitch" >>"$localrc_file"
         echo "Q_ML2_TENANT_NETWORK_TYPE=vxlan" >>"$localrc_file"
         if [[ "$DEVSTACK_GATE_IRONIC_BUILD_RAMDISK" -eq 0 ]]; then
@@ -514,13 +519,6 @@ EOF
 }
 
 if [[ -n "$DEVSTACK_GATE_GRENADE" ]]; then
-    if [[ "$DEVSTACK_GATE_GRENADE" == "sideways-ironic" ]]; then
-        # Disable ironic when generating the "old" localrc.
-        TMP_DEVSTACK_GATE_IRONIC=$DEVSTACK_GATE_IRONIC
-        TMP_DEVSTACK_GATE_VIRT_DRIVER=$DEVSTACK_GATE_VIRT_DRIVER
-        export DEVSTACK_GATE_IRONIC=0
-        export DEVSTACK_GATE_VIRT_DRIVER="fake"
-    fi
     if [[ "$DEVSTACK_GATE_GRENADE" == "sideways-neutron" ]]; then
         # Use nova network when generating "old" localrc.
         TMP_DEVSTACK_GATE_NEUTRON=$DEVSTACK_GATE_NEUTRON
@@ -529,12 +527,6 @@ if [[ -n "$DEVSTACK_GATE_GRENADE" ]]; then
     cd $BASE/old/devstack
     setup_localrc "old" "localrc" "primary"
 
-    if [[ "$DEVSTACK_GATE_GRENADE" == "sideways-ironic" ]]; then
-        # Set ironic and virt driver settings to those initially set
-        # by the job.
-        export DEVSTACK_GATE_IRONIC=$TMP_DEVSTACK_GATE_IRONIC
-        export DEVSTACK_GATE_VIRT_DRIVER=$TMP_DEVSTACK_GATE_VIRT_DRIVER
-    fi
     if [[ "$DEVSTACK_GATE_GRENADE" == "sideways-neutron" ]]; then
         # Set neutron setting to that initially set by the job.
         export DEVSTACK_GATE_NEUTRON=$TMP_DEVSTACK_GATE_NEUTRON
@@ -558,13 +550,6 @@ TEMPEST_CONCURRENCY=$TEMPEST_CONCURRENCY
 VERBOSE=False
 PLUGIN_DIR=\$TARGET_RELEASE_DIR
 EOF
-
-    if [[ "$DEVSTACK_GATE_GRENADE" == "sideways-ironic" ]]; then
-        # sideways-ironic migrates from a fake environment, avoid exercising
-        # base.
-        echo "BASE_RUN_SMOKE=False" >> $BASE/new/grenade/localrc
-        echo "RUN_JAVELIN=False" >> $BASE/new/grenade/localrc
-    fi
 
     # Create a pass through variable that can add content to the
     # grenade pluginrc. Needed for grenade external plugins in gate
@@ -745,42 +730,47 @@ if [[ "$DEVSTACK_GATE_TEMPEST" -eq "1" ]]; then
     # something is wrong, to enforce exit on bad test results.
     set -o errexit
 
+    if [[ "${TEMPEST_OS_TEST_TIMEOUT:-}" != "" ]] ; then
+        TEMPEST_COMMAND="sudo -H -u tempest OS_TEST_TIMEOUT=$TEMPEST_OS_TEST_TIMEOUT tox"
+    else
+        TEMPEST_COMMAND="sudo -H -u tempest tox"
+    fi
     cd $BASE/new/tempest
     if [[ "$DEVSTACK_GATE_TEMPEST_REGEX" != "" ]] ; then
         if [[ "$DEVSTACK_GATE_TEMPEST_ALL_PLUGINS" -eq "1" ]]; then
             echo "Running tempest with plugins and a custom regex filter"
-            sudo -H -u tempest tox -eall-plugin -- --concurrency=$TEMPEST_CONCURRENCY $DEVSTACK_GATE_TEMPEST_REGEX
+            $TEMPEST_COMMAND -eall-plugin -- --concurrency=$TEMPEST_CONCURRENCY $DEVSTACK_GATE_TEMPEST_REGEX
         else
             echo "Running tempest with a custom regex filter"
-            sudo -H -u tempest tox -eall -- --concurrency=$TEMPEST_CONCURRENCY $DEVSTACK_GATE_TEMPEST_REGEX
+            $TEMPEST_COMMAND -eall -- --concurrency=$TEMPEST_CONCURRENCY $DEVSTACK_GATE_TEMPEST_REGEX
         fi
     elif [[ "$DEVSTACK_GATE_TEMPEST_ALL_PLUGINS" -eq "1" ]]; then
         echo "Running tempest all-plugins test suite"
-        sudo -H -u tempest tox -eall-plugin -- --concurrency=$TEMPEST_CONCURRENCY
+        $TEMPEST_COMMAND -eall-plugin -- --concurrency=$TEMPEST_CONCURRENCY
     elif [[ "$DEVSTACK_GATE_TEMPEST_ALL" -eq "1" ]]; then
         echo "Running tempest all test suite"
-        sudo -H -u tempest tox -eall -- --concurrency=$TEMPEST_CONCURRENCY
+        $TEMPEST_COMMAND -eall -- --concurrency=$TEMPEST_CONCURRENCY
     elif [[ "$DEVSTACK_GATE_TEMPEST_DISABLE_TENANT_ISOLATION" -eq "1" ]]; then
         echo "Running tempest full test suite serially"
-        sudo -H -u tempest tox -efull-serial
+        $TEMPEST_COMMAND -efull-serial
     elif [[ "$DEVSTACK_GATE_TEMPEST_FULL" -eq "1" ]]; then
         echo "Running tempest full test suite"
-        sudo -H -u tempest tox -efull -- --concurrency=$TEMPEST_CONCURRENCY
+        $TEMPEST_COMMAND -efull -- --concurrency=$TEMPEST_CONCURRENCY
     elif [[ "$DEVSTACK_GATE_TEMPEST_STRESS" -eq "1" ]] ; then
         echo "Running stress tests"
-        sudo -H -u tempest tox -estress -- $DEVSTACK_GATE_TEMPEST_STRESS_ARGS
+        $TEMPEST_COMMAND -estress -- $DEVSTACK_GATE_TEMPEST_STRESS_ARGS
     elif [[ "$DEVSTACK_GATE_TEMPEST_HEAT_SLOW" -eq "1" ]] ; then
         echo "Running slow heat tests"
-        sudo -H -u tempest tox -eheat-slow -- --concurrency=$TEMPEST_CONCURRENCY
+        $TEMPEST_COMMAND -eheat-slow -- --concurrency=$TEMPEST_CONCURRENCY
     elif [[ "$DEVSTACK_GATE_TEMPEST_LARGE_OPS" -ge "1" ]] ; then
         echo "Running large ops tests"
-        sudo -H -u tempest tox -elarge-ops -- --concurrency=$TEMPEST_CONCURRENCY
+        $TEMPEST_COMMAND -elarge-ops -- --concurrency=$TEMPEST_CONCURRENCY
     elif [[ "$DEVSTACK_GATE_SMOKE_SERIAL" -eq "1" ]] ; then
         echo "Running tempest smoke tests"
-        sudo -H -u tempest tox -esmoke-serial
+        $TEMPEST_COMMAND -esmoke-serial
     else
         echo "Running tempest smoke tests"
-        sudo -H -u tempest tox -esmoke -- --concurrency=$TEMPEST_CONCURRENCY
+        $TEMPEST_COMMAND -esmoke -- --concurrency=$TEMPEST_CONCURRENCY
     fi
 
 fi

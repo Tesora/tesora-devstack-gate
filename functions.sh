@@ -369,11 +369,13 @@ function fix_etc_hosts {
 }
 
 function fix_disk_layout {
-    # HPCloud and Rackspace performance nodes provide no swap, but do
-    # have ephemeral disks we can use.  HPCloud also doesn't have
-    # enough space on / for two devstack installs, so we partition the
-    # disk and mount it on /opt, syncing the previous contents of /opt
-    # over.
+    # HPCloud and Rackspace performance nodes provide no swap, but do have
+    # ephemeral disks we can use. For providers with no ephemeral disks, such
+    # as OVH or Internap, create and use a sparse swapfile on the root
+    # filesystem.
+    # HPCloud also doesn't have enough space on / for two devstack installs,
+    # so we partition the disk and mount it on /opt, syncing the previous
+    # contents of /opt over.
     if [ `grep SwapTotal /proc/meminfo | awk '{ print $2; }'` -eq 0 ]; then
         if [ -b /dev/xvde ]; then
             DEV='/dev/xvde'
@@ -384,6 +386,7 @@ function fix_disk_layout {
             fi
         fi
         if [ -n "$DEV" ]; then
+            # If an ephemeral device is available, use it
             local swap=${DEV}1
             local lvmvol=${DEV}2
             local optdev=${DEV}3
@@ -402,6 +405,14 @@ function fix_disk_layout {
             sudo find /opt/ -mindepth 1 -maxdepth 1 -exec mv {} /mnt/ \;
             sudo umount /mnt
             sudo mount ${DEV}2 /opt
+        else
+            # If no ephemeral devices are available, use root filesystem
+            local lodevice=$(sudo losetup -f)
+            local swapfile='/root/swapfile'
+            sudo dd if=/dev/zero of=${swapfile} bs=1 count=0 seek=8G
+            sudo mkswap ${swapfile}
+            sudo losetup ${lodevice} ${swapfile}
+            sudo swapon ${lodevice}
         fi
     fi
 
@@ -1115,7 +1126,12 @@ function ovs_gre_bridge {
     # as for the mtu, look for notes on lp#1301958 in devstack-vm-gate.sh
     sudo ip link set mtu $mtu dev $bridge_name
     if [[ "$set_ips" == "True" ]] ; then
-        sudo ip addr add ${pub_addr_prefix}.${offset}/${pub_addr_mask} dev ${bridge_name}
+        echo "Set bridge: ${bridge_name}"
+        if ! sudo ip addr show dev ${bridge_name} | grep -q \
+            ${pub_addr_prefix}.${offset}/${pub_addr_mask} ; then
+                sudo ip addr add ${pub_addr_prefix}.${offset}/${pub_addr_mask} \
+                    dev ${bridge_name}
+        fi
     fi
     for node_ip in $peer_ips; do
         (( offset++ ))
@@ -1128,7 +1144,7 @@ function ovs_gre_bridge {
         # Create the gre tunnel for the Controller/Network Node:
         #  This establishes a tunnel between remote $node_ip to local $host_ip
         #  uniquely identified by a key $offset
-        sudo ovs-vsctl add-port $bridge_name \
+        sudo ovs-vsctl --may-exist add-port $bridge_name \
             ${bridge_name}_${node_ip} \
             -- set interface ${bridge_name}_${node_ip} type=gre \
             options:remote_ip=${node_ip} \
@@ -1139,16 +1155,19 @@ function ovs_gre_bridge {
         remote_command $node_ip "$install_ovs_deps"
         remote_command $node_ip sudo ovs-vsctl --may-exist add-br $bridge_name
         remote_command $node_ip sudo ip link set mtu $mtu dev $bridge_name
-        remote_command $node_ip sudo ovs-vsctl add-port $bridge_name \
+        remote_command $node_ip sudo ovs-vsctl --may-exist add-port $bridge_name \
             ${bridge_name}_${host_ip} \
             -- set interface ${bridge_name}_${host_ip} type=gre \
             options:remote_ip=${host_ip} \
             options:key=${offset} \
             options:local_ip=${node_ip}
         if [[ "$set_ips" == "True" ]] ; then
-            remote_command $node_ip \
-                sudo ip addr add ${pub_addr_prefix}.${offset}/${pub_addr_mask} \
-                dev ${bridge_name}
+            if ! remote_command $node_ip sudo ip addr show dev ${bridge_name} | \
+                grep -q ${pub_addr_prefix}.${offset}/${pub_addr_mask} ; then
+                    remote_command $node_ip sudo ip addr add \
+                        ${pub_addr_prefix}.${offset}/${pub_addr_mask} \
+                        dev ${bridge_name}
+            fi
         fi
     done
 }

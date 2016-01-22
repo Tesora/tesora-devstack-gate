@@ -34,7 +34,6 @@ start_timer
 
 PROJECTS="openstack-infra/devstack-gate $PROJECTS"
 PROJECTS="openstack-dev/devstack $PROJECTS"
-PROJECTS="openstack-dev/grenade $PROJECTS"
 PROJECTS="openstack-dev/pbr $PROJECTS"
 PROJECTS="openstack-infra/tripleo-ci $PROJECTS"
 PROJECTS="openstack/automaton $PROJECTS"
@@ -53,9 +52,6 @@ PROJECTS="openstack/heat $PROJECTS"
 PROJECTS="openstack/heat-cfntools $PROJECTS"
 PROJECTS="openstack/heat-templates $PROJECTS"
 PROJECTS="openstack/horizon $PROJECTS"
-PROJECTS="openstack/ironic $PROJECTS"
-PROJECTS="openstack/ironic-lib $PROJECTS"
-PROJECTS="openstack/ironic-python-agent $PROJECTS"
 PROJECTS="openstack/keystone $PROJECTS"
 PROJECTS="openstack/keystoneauth $PROJECTS"
 PROJECTS="openstack/keystonemiddleware $PROJECTS"
@@ -92,20 +88,6 @@ PROJECTS="openstack/oslo.service $PROJECTS"
 PROJECTS="openstack/oslo.versionedobjects $PROJECTS"
 PROJECTS="openstack/oslo.vmware $PROJECTS"
 PROJECTS="openstack/pycadf $PROJECTS"
-PROJECTS="openstack/python-ceilometerclient $PROJECTS"
-PROJECTS="openstack/python-cinderclient $PROJECTS"
-PROJECTS="openstack/python-glanceclient $PROJECTS"
-PROJECTS="openstack/python-heatclient $PROJECTS"
-PROJECTS="openstack/python-ironicclient $PROJECTS"
-PROJECTS="openstack/python-keystoneclient $PROJECTS"
-PROJECTS="openstack/python-manilaclient $PROJECTS"
-PROJECTS="openstack/python-zaqarclient $PROJECTS"
-PROJECTS="openstack/python-neutronclient $PROJECTS"
-PROJECTS="openstack/python-novaclient $PROJECTS"
-PROJECTS="openstack/python-openstackclient $PROJECTS"
-PROJECTS="openstack/python-saharaclient $PROJECTS"
-PROJECTS="openstack/python-swiftclient $PROJECTS"
-PROJECTS="openstack/python-troveclient $PROJECTS"
 PROJECTS="openstack/requirements $PROJECTS"
 PROJECTS="openstack/sahara $PROJECTS"
 PROJECTS="openstack/sahara-dashboard $PROJECTS"
@@ -233,8 +215,6 @@ export DEVSTACK_PROJECT_FROM_GIT=${DEVSTACK_PROJECT_FROM_GIT:-}
 #       compute at stable/icehouse
 #   partial-ironic means stable/icehouse => stable/juno but keep ironic
 #       compute at stable/icehouse
-#   sideways-ironic means stable/juno with nova baremetal =>
-#       stable/juno with ironic
 #   sideways-neutron means stable/juno with nova network =>
 #       stable/juno with neutron
 export DEVSTACK_GATE_GRENADE=${DEVSTACK_GATE_GRENADE:-}
@@ -334,6 +314,10 @@ fi
 
 # Set the virtualization driver to: libvirt, openvz, xenapi
 export DEVSTACK_GATE_VIRT_DRIVER=${DEVSTACK_GATE_VIRT_DRIVER:-libvirt}
+
+# Use qemu by default for consistency since some providers enable
+# nested virt
+export DEVSTACK_GATE_LIBVIRT_TYPE=${DEVSTACK_GATE_LIBVIRT_TYPE:-qemu}
 
 # See switch below for this -- it gets set to 1 when tempest
 # is the project being gated.

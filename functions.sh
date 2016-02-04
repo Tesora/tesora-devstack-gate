@@ -728,17 +728,25 @@ function process_testr_artifacts {
         log_path=$BASE/logs/$path_prefix
     fi
 
+    if  [[ -f $BASE/devstack.subunit ]]; then
+        sudo cp $BASE/devstack.subunit $log_path/testrepository.subunit
+    fi
+
     # Check for an interrupted run first because 0 will always exist
     if [ -f $repo_path/tmp* ]; then
         # If testr timed out, collect temp file from testr
-        sudo cp $repo_path/tmp* $log_path/testrepository.subunit
-        archive_test_artifact $log_path/testrepository.subunit
+        sudo cat $repo_path/tmp* >> $WORKSPACE/tempest.subunit
+        archive_test_artifact $WORKSPACE/tempest.subunit
     elif [ -f $repo_path/0 ]; then
         pushd $project_path
-        sudo testr last --subunit > $WORKSPACE/testrepository.subunit
+        sudo testr last --subunit > $WORKSPACE/tempest.subunit
         popd
-        sudo mv $WORKSPACE/testrepository.subunit \
-            $log_path/testrepository.subunit
+    fi
+    if [[ -f $log_path/testrepository.subunit ]] ; then
+        if [[ -f $WORKSPACE/tempest.subunit ]] ; then
+            sudo cat $WORKSPACE/tempest.subunit \
+                | sudo tee -a $log_path/testrepository.subunit > /dev/null
+        fi
         sudo /usr/os-testr-env/bin/subunit2html \
             $log_path/testrepository.subunit $log_path/testr_results.html
         archive_test_artifact $log_path/testrepository.subunit
@@ -1092,7 +1100,7 @@ function enable_netconsole {
 # For OVS troubleshooting needs:
 #   http://www.yet.org/2014/09/openvswitch-troubleshooting/
 #
-function ovs_gre_bridge {
+function ovs_vxlan_bridge {
     if is_fedora; then
         local ovs_package='openvswitch'
         local ovs_service='openvswitch'
@@ -1138,26 +1146,26 @@ function ovs_gre_bridge {
         # For reference on how to setup a tunnel using OVS see:
         #   http://openvswitch.org/support/config-cookbooks/port-tunneling/
         # The command below is equivalent to the sequence of ip/brctl commands
-        # where an interface of gre type is created first, and then plugged into
+        # where an interface of vxlan type is created first, and then plugged into
         # the bridge; options are command specific configuration key-value pairs.
         #
-        # Create the gre tunnel for the Controller/Network Node:
+        # Create the vxlan tunnel for the Controller/Network Node:
         #  This establishes a tunnel between remote $node_ip to local $host_ip
         #  uniquely identified by a key $offset
         sudo ovs-vsctl --may-exist add-port $bridge_name \
             ${bridge_name}_${node_ip} \
-            -- set interface ${bridge_name}_${node_ip} type=gre \
+            -- set interface ${bridge_name}_${node_ip} type=vxlan \
             options:remote_ip=${node_ip} \
             options:key=${offset} \
             options:local_ip=${host_ip}
-        # Now complete the gre tunnel setup for the Compute Node:
+        # Now complete the vxlan tunnel setup for the Compute Node:
         #  Similarly this establishes the tunnel in the reverse direction
         remote_command $node_ip "$install_ovs_deps"
         remote_command $node_ip sudo ovs-vsctl --may-exist add-br $bridge_name
         remote_command $node_ip sudo ip link set mtu $mtu dev $bridge_name
         remote_command $node_ip sudo ovs-vsctl --may-exist add-port $bridge_name \
             ${bridge_name}_${host_ip} \
-            -- set interface ${bridge_name}_${host_ip} type=gre \
+            -- set interface ${bridge_name}_${host_ip} type=vxlan \
             options:remote_ip=${host_ip} \
             options:key=${offset} \
             options:local_ip=${node_ip}

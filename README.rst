@@ -161,10 +161,10 @@ If you get a cryptic error like ``ERROR: 'public'`` then you may need to
 manually look up the IP address with ``nova list --name testserver`` and
 connect by running ``ssh root@<ip_address>`` instead.
 
-Upgrade the server, install git and pip packages, add tox via pip
-(because the packaged version is too old), set up a "jenkins" account
-(add user "jenkins" to sudoers) and reboot to make sure you're running 
-a current kernel::
+As the root user, upgrade the server, install git and pip packages, add tox via
+pip (because the packaged version is too old), set up a "jenkins" account (add
+user "jenkins" to sudoers) and reboot to make sure you're running a current
+kernel::
 
   apt-get install -y git \
   && git clone https://git.openstack.org/openstack-infra/system-config \
@@ -172,8 +172,8 @@ a current kernel::
   && puppet apply \
   --modulepath=/root/system-config/modules:/etc/puppet/modules \
   -e "class { openstack_project::single_use_slave: install_users => false,
-  ssh_key => \"$( cat .ssh/id_rsa.pub | awk '{print $2}' )\" }" \
-  && echo "jenkins ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers \
+  enable_unbound => true, ssh_key => \"$( cat .ssh/id_rsa.pub | awk '{print $2}' )\" }" \
+  && echo "jenkins ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/jenkins \
   && reboot
 
 Wait a few moments for the reboot to complete, then log back in with
@@ -211,7 +211,6 @@ the jenkins/jobs directory in a file named devstack-gate.yaml. It will
 probably look something like::
 
   export PYTHONUNBUFFERED=true
-  export DEVSTACK_GATE_TIMEOUT=120
   export DEVSTACK_GATE_TEMPEST=1
   export DEVSTACK_GATE_TEMPEST_FULL=1
   cp devstack-gate/devstack-vm-gate-wrap.sh ./safe-devstack-vm-gate-wrap.sh

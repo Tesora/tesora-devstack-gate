@@ -53,6 +53,8 @@ FIXED_NETWORK_SIZE=${DEVSTACK_GATE_FIXED_NETWORK_SIZE:-256}
 FLOATING_HOST_PREFIX=${DEVSTACK_GATE_FLOATING_HOST_PREFIX:-172.24.4}
 FLOATING_HOST_MASK=${DEVSTACK_GATE_FLOATING_HOST_MASK:-23}
 
+EXTERNAL_BRIDGE_MTU=1450
+
 function setup_ssh {
     local path=$1
     $ANSIBLE all --sudo -f 5 -i "$WORKSPACE/inventory" -m file \
@@ -72,10 +74,10 @@ function setup_nova_net_networking {
     # issue with nova net configuring br100 to take over eth0
     # by default.
     # TODO (clarkb): figure out how to make bridge setup sane with ansible.
-    ovs_gre_bridge "br_pub" $primary_node "True" 1 \
+    ovs_vxlan_bridge "br_pub" $primary_node "True" 1 \
                     $FLOATING_HOST_PREFIX $FLOATING_HOST_MASK \
                     $sub_nodes
-    ovs_gre_bridge "br_flat" $primary_node "False" 128 \
+    ovs_vxlan_bridge "br_flat" $primary_node "False" 128 \
                     $sub_nodes
     cat <<EOF >>"$localrc"
 FLAT_INTERFACE=br_flat
@@ -124,7 +126,7 @@ EOF
 MULTI_HOST=True
 EOF
     elif [[ "$DEVSTACK_GATE_NEUTRON_DVR" -eq '1' ]]; then
-        ovs_gre_bridge "br-ex" $primary_node "True" 1 \
+        ovs_vxlan_bridge "br-ex" $primary_node "True" 1 \
                         $FLOATING_HOST_PREFIX $FLOATING_HOST_MASK \
                         $sub_nodes
     fi
@@ -519,18 +521,9 @@ EOF
 }
 
 if [[ -n "$DEVSTACK_GATE_GRENADE" ]]; then
-    if [[ "$DEVSTACK_GATE_GRENADE" == "sideways-neutron" ]]; then
-        # Use nova network when generating "old" localrc.
-        TMP_DEVSTACK_GATE_NEUTRON=$DEVSTACK_GATE_NEUTRON
-        export DEVSTACK_GATE_NEUTRON=0
-    fi
     cd $BASE/old/devstack
     setup_localrc "old" "localrc" "primary"
 
-    if [[ "$DEVSTACK_GATE_GRENADE" == "sideways-neutron" ]]; then
-        # Set neutron setting to that initially set by the job.
-        export DEVSTACK_GATE_NEUTRON=$TMP_DEVSTACK_GATE_NEUTRON
-    fi
     cd $BASE/new/devstack
     setup_localrc "new" "localrc" "primary"
 
@@ -560,6 +553,10 @@ EOF
 
     if [[ "$DEVSTACK_GATE_TOPOLOGY" == "multinode" ]]; then
         echo -e "[[post-config|\$NOVA_CONF]]\n[libvirt]\ncpu_mode=custom\ncpu_model=gate64" >> local.conf
+        if [[ $DEVSTACK_GATE_NEUTRON -eq "1" ]]; then
+            echo -e "[[post-config|\$NEUTRON_CONF]]\n[DEFAULT]\nnetwork_device_mtu=$EXTERNAL_BRIDGE_MTU" >> local.conf
+        fi
+
         # get this in our base config
         cp local.conf $BASE/old/devstack
 
@@ -593,6 +590,9 @@ else
     setup_localrc "new" "localrc" "primary"
     if [[ "$DEVSTACK_GATE_TOPOLOGY" == "multinode" ]]; then
         echo -e "[[post-config|\$NOVA_CONF]]\n[libvirt]\ncpu_mode=custom\ncpu_model=gate64" >> local.conf
+        if [[ $DEVSTACK_GATE_NEUTRON -eq "1" ]]; then
+            echo -e "[[post-config|\$NEUTRON_CONF]]\n[DEFAULT]\nnetwork_device_mtu=$EXTERNAL_BRIDGE_MTU" >> local.conf
+        fi
     fi
 
     setup_networking
@@ -654,7 +654,7 @@ else
             MTU_NODES=all
         fi
         $ANSIBLE "$MTU_NODES" -f 5 -i "$WORKSPACE/inventory" -m shell \
-                -a "sudo ip link set mtu 1450 dev br-ex"
+                -a "sudo ip link set mtu $EXTERNAL_BRIDGE_MTU dev br-ex"
     fi
 fi
 

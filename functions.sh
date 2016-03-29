@@ -530,7 +530,9 @@ function setup_project {
             elif [ "$branch" == "dev/EE-1.7" ]; then
                 branch="stable/liberty"
             elif [ "$branch" == "dev/EE-1.8" ]; then
-                # eventually, branch="stable/mitaka"
+                branch="stable/mitaka"
+            elif [ "$branch" == "dev/EE-1.10" ]; then
+                # eventually, branch="stable/newton"
                 branch="master"
             elif [ "$branch" == "stable/EE-1.5" ]; then
                 branch="stable/kilo"

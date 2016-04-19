@@ -37,6 +37,11 @@ source $WORKSPACE/devstack-gate/functions.sh
 
 start_timer
 
+# Save the PROJECTS variable as it was passed in.  This is needed for reproduce.sh
+# incase the job definition contains items that are not in the "global" list
+# below.
+# See: https://bugs.launchpad.net/openstack-gate/+bug/1544827
+JOB_PROJECTS="$PROJECTS"
 PROJECTS="openstack-infra/devstack-gate $PROJECTS"
 PROJECTS="openstack-dev/devstack $PROJECTS"
 PROJECTS="openstack-dev/pbr $PROJECTS"
@@ -269,6 +274,9 @@ if [[ -n "$DEVSTACK_GATE_GRENADE" ]]; then
                 export GRENADE_NEW_BRANCH="stable/liberty"
             elif [[ "$GRENADE_BASE_BRANCH" == "stable/liberty" ]]; then
                 export GRENADE_OLD_BRANCH="stable/liberty"
+                export GRENADE_NEW_BRANCH="stable/mitaka"
+            elif [[ "$GRENADE_BASE_BRANCH" == "stable/mitaka" ]]; then
+                export GRENADE_OLD_BRANCH="stable/mitaka"
                 export GRENADE_NEW_BRANCH="$GIT_BRANCH"
             fi
             ;;
@@ -296,11 +304,20 @@ if [[ -n "$DEVSTACK_GATE_GRENADE" ]]; then
             elif [[ "$GRENADE_BASE_BRANCH" == "stable/liberty" ]]; then
                 export GRENADE_OLD_BRANCH="stable/kilo"
                 export GRENADE_NEW_BRANCH="stable/liberty"
+            elif [[ "$GRENADE_BASE_BRANCH" == "stable/mitaka" ]]; then
+                export GRENADE_OLD_BRANCH="stable/liberty"
+                export GRENADE_NEW_BRANCH="stable/mitaka"
             elif [[ "$GRENADE_BASE_BRANCH" == "dev/EE-1.6" ]]; then
                 export GRENADE_OLD_BRANCH="dev/EE-1.4"
                 export GRENADE_NEW_BRANCH="dev/EE-1.6"
-            else # master
+            elif [[ "$GRENADE_BASE_BRANCH" == "dev/EE-1.7" ]]; then
+                export GRENADE_OLD_BRANCH="dev/EE-1.6"
+                export GRENADE_NEW_BRANCH="dev/EE-1.7"
+            elif [[ "$GRENADE_BASE_BRANCH" == "dev/EE-1.8" ]]; then
                 export GRENADE_OLD_BRANCH="dev/EE-1.7"
+                export GRENADE_NEW_BRANCH="dev/EE-1.8"
+            else # master
+                export GRENADE_OLD_BRANCH="dev/EE-1.8"
                 export GRENADE_NEW_BRANCH="$GIT_BRANCH"
             fi
             ;;
@@ -471,7 +488,7 @@ $ANSIBLE all -f 5 -i "$WORKSPACE/inventory" -m file \
     -a "path='$WORKSPACE/logs' state=directory"
 
 # Record a file to reproduce this build
-reproduce
+reproduce "$JOB_PROJECTS"
 
 # Run ansible to do setup_host on all nodes.
 echo "Setting up the hosts"

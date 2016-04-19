@@ -1,6 +1,8 @@
 config:
   default:
     master: [default, ceilometer, glance, horizon, nova, swift, cinder, keystone]
+    ocata: [default, ceilometer, glance, horizon, nova, swift, cinder, keystone]
+    mitaka: [default, ceilometer, glance, horizon, nova, swift, cinder, keystone]
     liberty: [default, ceilometer, glance, horizon, nova, swift, cinder, keystone]
     kilo: [default, ceilometer, glance, horizon, nova, swift, cinder, keystone]
     EE-1.4: [default, ceilometer, glance, horizon, nova, swift, cinder, keystone, heat]
@@ -51,12 +53,14 @@ config:
     features: [ceph]
   heat:
     features: [heat]
+  tlsproxy:
+    features: [tlsproxy]
 
 branches:
   # The value of ""default" is the name of the "trunk" branch
   default: master
   # Normalized branch names only here, e.g. stable/icehouse => icehouse
-  allowed: [master, liberty, kilo, juno, icehouse, EE-1.4, EE-1.5, EE-1.6, EE-1.7, EE-1.8, EE-1.10, CE-1.4, CE-1.6]
+  allowed: [master, ocata, mitaka, liberty, kilo, juno, icehouse, EE-1.4, EE-1.5, EE-1.6, EE-1.7, EE-1.8, EE-1.10, CE-1.4, CE-1.6]
 
 features:
   default:
@@ -162,3 +166,7 @@ features:
   ceph:
     base:
       services: [ceph]
+
+  tlsproxy:
+    base:
+      services: [tls-proxy]

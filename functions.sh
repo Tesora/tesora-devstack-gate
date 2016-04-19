@@ -99,7 +99,7 @@ function tsfilter {
 function _ping_check {
     local host=$1
     local times=${2:-20}
-    echo "Testing ICMP connectivit to $host"
+    echo "Testing ICMP connectivity to $host"
     ping -c $times $host
 }
 
@@ -171,14 +171,31 @@ function remaining_time {
 
 # Create a script to reproduce this build
 function reproduce {
+    JOB_PROJECTS=$1
     cat > $WORKSPACE/logs/reproduce.sh <<EOF
 #!/bin/bash -xe
+#
+# Script to reproduce devstack-gate run.
+#
+# Prerequisites:
+# - Fresh install of Ubuntu Trusty, with basic internet access
+# - Must have python-dev, build-essential, and git installed from apt
+# - Must have virtualenv installed from pip
+# - Must be run as root
+#
 
 exec 0</dev/null
 
 EOF
 
-    export | grep '\(DEVSTACK\|ZUUL\)' >> $WORKSPACE/logs/reproduce.sh
+    # first get all keys that match our filter and then output the whole line
+    # that will ensure that multi-line env vars are set properly
+    for KEY in $(printenv | grep '\(DEVSTACK\|ZUUL\)' | sed 's/\(.*\)=.*/\1/'); do
+        echo "declare -x ${KEY}=\"${!KEY}\"" >> $WORKSPACE/logs/reproduce.sh
+    done
+    if [ -n "$JOB_PROJECTS" ] ; then
+        echo "declare -x PROJECTS=\"$JOB_PROJECTS\"" >> $WORKSPACE/logs/reproduce.sh
+    fi
 
     cat >> $WORKSPACE/logs/reproduce.sh <<EOF
 
@@ -369,14 +386,19 @@ function fix_etc_hosts {
 }
 
 function fix_disk_layout {
-    # HPCloud and Rackspace performance nodes provide no swap, but do have
-    # ephemeral disks we can use. For providers with no ephemeral disks, such
-    # as OVH or Internap, create and use a sparse swapfile on the root
-    # filesystem.
-    # HPCloud also doesn't have enough space on / for two devstack installs,
+    # Don't attempt to fix disk layout more than once
+    [[ -e /etc/fixed_disk_layout ]] && return 0 || sudo touch /etc/fixed_disk_layout
+
+    # Ensure virtual machines from different providers all have at least 8GB of
+    # swap.
+    # Use an ephemeral disk if there is one or create and use a swapfile.
+    # Rackspace also doesn't have enough space on / for two devstack installs,
     # so we partition the disk and mount it on /opt, syncing the previous
     # contents of /opt over.
-    if [ `grep SwapTotal /proc/meminfo | awk '{ print $2; }'` -eq 0 ]; then
+    SWAPSIZE=8192
+    swapcurrent=$(( $(grep SwapTotal /proc/meminfo | awk '{ print $2; }') / 1024 ))
+
+    if [[ $swapcurrent -lt $SWAPSIZE ]]; then
         if [ -b /dev/xvde ]; then
             DEV='/dev/xvde'
         else
@@ -396,7 +418,7 @@ function fix_disk_layout {
                 sudo umount ${DEV}
             fi
             sudo parted ${DEV} --script -- mklabel msdos
-            sudo parted ${DEV} --script -- mkpart primary linux-swap 1 8192
+            sudo parted ${DEV} --script -- mkpart primary linux-swap 1 ${SWAPSIZE}
             sudo parted ${DEV} --script -- mkpart primary ext2 8192 -1
             sudo mkswap ${DEV}1
             sudo mkfs.ext4 ${DEV}2
@@ -405,15 +427,24 @@ function fix_disk_layout {
             sudo find /opt/ -mindepth 1 -maxdepth 1 -exec mv {} /mnt/ \;
             sudo umount /mnt
             sudo mount ${DEV}2 /opt
+
+            # Sanity check
+            grep -q ${DEV}1 /proc/swaps || exit 1
+            grep -q ${DEV}2 /proc/mounts || exit 1
         else
             # If no ephemeral devices are available, use root filesystem
             # Don't use sparse device to avoid wedging when disk space and
             # memory are both unavailable.
             local swapfile='/root/swapfile'
-            sudo fallocate -l 8192M ${swapfile}
+            swapdiff=$(( $SWAPSIZE - $swapcurrent ))
+
+            sudo dd if=/dev/zero of=${swapfile} bs=1M count=${swapdiff}
             sudo chmod 600 ${swapfile}
             sudo mkswap ${swapfile}
             sudo swapon ${swapfile}
+
+            # Sanity check
+            grep -q ${swapfile} /proc/swaps || exit 1
         fi
     fi
 
@@ -592,9 +623,6 @@ function setup_workspace {
     sudo mkdir -p $DEST
     sudo chown -R $USER:$USER $DEST
 
-    #TODO(jeblair): remove when this is no longer created by the image
-    rm -fr ~/workspace-cache/
-
     # The vm template update job should cache the git repos
     # Move them to where we expect:
     echo "Using branch: $base_branch"
@@ -651,6 +679,9 @@ function setup_host {
     echo "NProc has discovered $(nproc) CPUs"
     cat /proc/cpuinfo
 
+    # Capture locale configuration
+    locale
+
     # This is necessary to keep sudo from complaining
     fix_etc_hosts
 
@@ -658,7 +689,12 @@ function setup_host {
     sudo mkdir -p $BASE
 
     # Start with a fresh syslog
-    if uses_debs; then
+    if which journalctl ; then
+        # save timestamp and use journalctl to dump everything since
+        # then at the end
+        date +"%Y-%m-%d %H:%M:%S" | sudo tee $BASE/log-start-timestamp.txt
+    else
+        # Assume rsyslog, move old logs aside then restart the service.
         sudo stop rsyslog
         sudo mv /var/log/syslog /var/log/syslog-pre-devstack
         sudo mv /var/log/kern.log /var/log/kern_log-pre-devstack
@@ -671,16 +707,12 @@ function setup_host {
         sudo chmod /var/log/kern.log --ref /var/log/kern_log-pre-devstack
         sudo chmod a+r /var/log/kern.log
         sudo start rsyslog
-    elif is_fedora; then
-        # save timestamp and use journalctl to dump everything since
-        # then at the end
-        date +"%Y-%m-%d %H:%M:%S" | sudo tee $BASE/log-start-timestamp.txt
     fi
 
     # Create a stack user for devstack to run as, so that we can
     # revoke sudo permissions from that user when appropriate.
     sudo useradd -U -s /bin/bash -d $BASE/new -m stack
-    # Use 755 mode on the user dir regarless to the /etc/login.defs setting
+    # Use 755 mode on the user dir regardless of the /etc/login.defs setting
     sudo chmod 755 $BASE/new
     TEMPFILE=`mktemp`
     echo "stack ALL=(root) NOPASSWD:ALL" >$TEMPFILE
@@ -786,15 +818,16 @@ function cleanup_host {
     sleep 2
 
     # No matter what, archive logs and config files
-    if uses_debs; then
-        sudo cp /var/log/syslog $BASE/logs/syslog.txt
-        sudo cp /var/log/kern.log $BASE/logs/kern_log.txt
-    elif is_fedora; then
+    if which journalctl ; then
         # the journal gives us syslog() and kernel output, so is like
         # a concatenation of the above.
         sudo journalctl --no-pager \
             --since="$(cat $BASE/log-start-timestamp.txt)" \
             | sudo tee $BASE/logs/syslog.txt > /dev/null
+    else
+        # assume rsyslog
+        sudo cp /var/log/syslog $BASE/logs/syslog.txt
+        sudo cp /var/log/kern.log $BASE/logs/kern_log.txt
     fi
 
     # apache logs; including wsgi stuff like horizon, keystone, etc.
@@ -834,8 +867,10 @@ function cleanup_host {
     sudo cp /etc/sudoers $BASE/logs/sudoers.txt
 
     # Archive config files
+    # NOTE(mriedem): 'openstack' is added separately since it's not a project
+    # but it is where clouds.yaml is stored in dsvm runs that use it.
     sudo mkdir $BASE/logs/etc/
-    for PROJECT in $PROJECTS; do
+    for PROJECT in $PROJECTS openstack; do
         proj=`basename $PROJECT`
         if [ -d /etc/$proj ]; then
             sudo cp -r /etc/$proj $BASE/logs/etc/
@@ -982,6 +1017,21 @@ function cleanup_host {
     # Make sure the current user can read all the logs and configs
     sudo chown -R $USER:$USER $BASE/logs/
     sudo chmod a+r $BASE/logs/ $BASE/logs/etc
+
+
+    # Collect all the deprecation related messages into a single file.
+    # strip out date(s), timestamp(s), pid(s), context information and
+    # remove duplicates as well so we have a limited set of lines to
+    # look through. The fancy awk is used instead of a "sort | uniq -c"
+    # to preserve the order in which we find the lines in a specific
+    # log file.
+    grep -i deprecat $BASE/logs/*.log $BASE/logs/apache/*.log | \
+        sed -r 's/[0-9]{1,2}\:[0-9]{1,2}\:[0-9]{1,2}\.[0-9]{1,3}/ /g' | \
+        sed -r 's/[0-9]{1,2}\:[0-9]{1,2}\:[0-9]{1,2}/ /g' | \
+        sed -r 's/[0-9]{1,4}-[0-9]{1,2}-[0-9]{1,4}/ /g' |
+        sed -r 's/\[.*\]/ /g' | \
+        sed -r 's/\s[0-9]+\s/ /g' | \
+        awk '{if ($0 in seen) {seen[$0]++} else {out[++n]=$0;seen[$0]=1}} END { for (i=1; i<=n; i++) print seen[out[i]]" :: " out[i] }' > $BASE/logs/deprecations.log
 
     # rename files to .txt; this is so that when displayed via
     # logs.openstack.org clicking results in the browser shows the

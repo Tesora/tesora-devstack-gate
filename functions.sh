@@ -902,7 +902,7 @@ function cleanup_host {
         sudo cp $BASE/old/devstacklog.txt $BASE/logs/old/
         sudo cp $BASE/old/devstack/localrc $BASE/logs/old/localrc.txt
         sudo cp $BASE/old/tempest/etc/tempest.conf $BASE/logs/old/tempest_conf.txt
-        if -f [ $BASE/old/devstack/tempest.log ] ; then
+        if [ -f $BASE/old/devstack/tempest.log ] ; then
             sudo cp $BASE/old/devstack/tempest.log $BASE/logs/old/verify_tempest_conf.log
         fi
 
@@ -977,9 +977,14 @@ function cleanup_host {
 
     sudo iptables-save > $WORKSPACE/iptables.txt
     df -h > $WORKSPACE/df.txt
-    pip freeze > $WORKSPACE/pip-freeze.txt
-    sudo mv $WORKSPACE/iptables.txt $WORKSPACE/df.txt \
-        $WORKSPACE/pip-freeze.txt $BASE/logs/
+    sudo mv $WORKSPACE/iptables.txt $WORKSPACE/df.txt $BASE/logs/
+
+    for py_ver in 2 3; do
+        if [[ `which python${py_ver}` ]]; then
+            python${py_ver} -m pip freeze > $WORKSPACE/pip${py_ver}-freeze.txt
+            sudo mv $WORKSPACE/pip${py_ver}-freeze.txt $BASE/logs/
+        fi
+    done
 
     if [ `command -v dpkg` ]; then
         dpkg -l> $WORKSPACE/dpkg-l.txt

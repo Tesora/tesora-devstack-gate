@@ -454,7 +454,9 @@ set -x
 # Install ansible
 sudo -H pip install virtualenv
 virtualenv /tmp/ansible
-/tmp/ansible/bin/pip install ansible==$ANSIBLE_VERSION
+# NOTE(emilien): workaround to avoid installing cryptography
+# https://github.com/ansible/ansible/issues/15665
+/tmp/ansible/bin/pip install paramiko==1.16.0 ansible==$ANSIBLE_VERSION
 export ANSIBLE=/tmp/ansible/bin/ansible
 
 # Write inventory file with groupings
@@ -572,15 +574,23 @@ fi
 # devstack-vm-gate-wrap.sh will not automagically run the hooks on each node.
 # Run pre test hook if we have one
 with_timeout call_hook_if_defined "pre_test_hook"
+GATE_RETVAL=$?
+if [ $GATE_RETVAL -ne 0 ]; then
+    echo "ERROR: the pre-test setup script run by this job failed - exit code: $GATE_RETVAL"
+fi
 
 # Run the gate function
-echo "Running gate_hook"
-with_timeout "gate_hook"
-GATE_RETVAL=$?
+if [ $GATE_RETVAL -eq 0 ]; then
+    echo "Running gate_hook"
+    with_timeout "gate_hook"
+    GATE_RETVAL=$?
+    if [ $GATE_RETVAL -ne 0 ]; then
+        echo "ERROR: the main setup script run by this job failed - exit code: $GATE_RETVAL"
+    fi
+fi
 RETVAL=$GATE_RETVAL
 
 if [ $GATE_RETVAL -ne 0 ]; then
-    echo "ERROR: the main setup script run by this job failed - exit code: $GATE_RETVAL"
     echo "    please look at the relevant log files to determine the root cause"
     echo "Running devstack worlddump.py"
     sudo $BASE/new/devstack/tools/worlddump.py -d $BASE/logs

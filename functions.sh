@@ -562,6 +562,8 @@ function setup_project {
                 branch="stable/liberty"
             elif [ "$branch" == "dev/EE-1.8" ]; then
                 branch="stable/mitaka"
+            elif [ "$branch" == "dev/EE-1.9" ]; then
+                branch="stable/mitaka"
             elif [ "$branch" == "dev/EE-1.10" ]; then
                 # eventually, branch="stable/newton"
                 branch="master"

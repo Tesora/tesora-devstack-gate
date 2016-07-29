@@ -226,8 +226,8 @@ function setup_localrc {
                     # As per reference architecture described in
                     # https://wiki.openstack.org/wiki/Neutron/DVR
                     # for DVR multi-node, add the following services
-                    # on all compute nodes (q-fwaas being optional):
-                    MY_ENABLED_SERVICES+=",q-l3,q-fwaas,q-meta"
+                    # on all compute nodes:
+                    MY_ENABLED_SERVICES+=",q-l3,q-meta"
                 fi
             else
                 MY_ENABLED_SERVICES+=",n-net,n-api-meta"
@@ -314,9 +314,15 @@ DATABASE_QUERY_LOGGING=True
 EBTABLES_RACE_FIX=True
 EOF
 
+    if [[ "$DEVSTACK_GATE_TOPOLOGY" == "multinode" ]] && [[ $DEVSTACK_GATE_NEUTRON -eq "1" ]]; then
+        # Reduce the MTU on br-ex to match the MTU of underlying tunnels
+        echo "PUBLIC_BRIDGE_MTU=$EXTERNAL_BRIDGE_MTU" >>"$localrc_file"
+    fi
+
     if [[ "$DEVSTACK_CINDER_SECURE_DELETE" -eq "0" ]]; then
         echo "CINDER_SECURE_DELETE=False" >>"$localrc_file"
     fi
+    echo "CINDER_VOLUME_CLEAR=${DEVSTACK_CINDER_VOLUME_CLEAR}" >>"$localrc_file"
 
     if [[ "$DEVSTACK_GATE_TEMPEST_HEAT_SLOW" -eq "1" ]]; then
         echo "HEAT_CREATE_TEST_IMAGE=False" >>"$localrc_file"
@@ -339,13 +345,12 @@ EOF
     fi
 
     if [[ "$DEVSTACK_GATE_VIRT_DRIVER" == "ironic" ]]; then
-        export TEMPEST_OS_TEST_TIMEOUT=${DEVSTACK_GATE_OS_TEST_TIMEOUT:-900}
+        export TEMPEST_OS_TEST_TIMEOUT=${DEVSTACK_GATE_OS_TEST_TIMEOUT:-1200}
         echo "IRONIC_DEPLOY_DRIVER=$DEVSTACK_GATE_IRONIC_DRIVER" >>"$localrc_file"
-        echo "VIRT_DRIVER=ironic" >>"$localrc_file"
         echo "IRONIC_BAREMETAL_BASIC_OPS=True" >>"$localrc_file"
         echo "IRONIC_VM_LOG_DIR=$BASE/$localrc_oldnew/ironic-bm-logs" >>"$localrc_file"
         echo "DEFAULT_INSTANCE_TYPE=baremetal" >>"$localrc_file"
-        echo "BUILD_TIMEOUT=600" >>"$localrc_file"
+        echo "BUILD_TIMEOUT=${DEVSTACK_GATE_TEMPEST_BAREMETAL_BUILD_TIMEOUT:-600}" >>"$localrc_file"
         echo "IRONIC_CALLBACK_TIMEOUT=600" >>"$localrc_file"
         echo "Q_AGENT=openvswitch" >>"$localrc_file"
         echo "Q_ML2_TENANT_NETWORK_TYPE=vxlan" >>"$localrc_file"
@@ -360,11 +365,9 @@ EOF
             echo "IRONIC_VM_EPHEMERAL_DISK=0" >>"$localrc_file"
             # agent CoreOS ramdisk is a little heavy
             echo "IRONIC_VM_SPECS_RAM=1024" >>"$localrc_file"
-            echo "IRONIC_VM_COUNT=1" >>"$localrc_file"
         else
             echo "IRONIC_ENABLED_DRIVERS=fake,pxe_ssh,pxe_ipmitool" >>"$localrc_file"
             echo "IRONIC_VM_EPHEMERAL_DISK=1" >>"$localrc_file"
-            echo "IRONIC_VM_COUNT=3" >>"$localrc_file"
         fi
     fi
 
@@ -557,6 +560,7 @@ TARGET_RUN_SMOKE=False
 SAVE_DIR=\$BASE_RELEASE_DIR/save
 DO_NOT_UPGRADE_SERVICES=$DO_NOT_UPGRADE_SERVICES
 TEMPEST_CONCURRENCY=$TEMPEST_CONCURRENCY
+OS_TEST_TIMEOUT=$DEVSTACK_GATE_OS_TEST_TIMEOUT
 VERBOSE=False
 PLUGIN_DIR=\$TARGET_RELEASE_DIR
 EOF
@@ -569,9 +573,10 @@ EOF
     fi
 
     if [[ "$DEVSTACK_GATE_TOPOLOGY" == "multinode" ]]; then
-        echo -e "[[post-config|\$NOVA_CONF]]\n[libvirt]\ncpu_mode=custom\ncpu_model=gate64" >> local.conf
+        # ensure local.conf exists to remove conditional logic
+        touch local.conf
         if [[ $DEVSTACK_GATE_NEUTRON -eq "1" ]]; then
-            echo -e "[[post-config|\$NEUTRON_CONF]]\n[DEFAULT]\nnetwork_device_mtu=$EXTERNAL_BRIDGE_MTU" >> local.conf
+            echo -e "[[post-config|\$NEUTRON_CONF]]\n[DEFAULT]\nglobal_physnet_mtu=$EXTERNAL_BRIDGE_MTU" >> local.conf
         fi
 
         # get this in our base config
@@ -606,9 +611,10 @@ else
     cd $BASE/new/devstack
     setup_localrc "new" "localrc" "primary"
     if [[ "$DEVSTACK_GATE_TOPOLOGY" == "multinode" ]]; then
-        echo -e "[[post-config|\$NOVA_CONF]]\n[libvirt]\ncpu_mode=custom\ncpu_model=gate64" >> local.conf
+        # ensure local.conf exists to remove conditional logic
+        touch local.conf
         if [[ $DEVSTACK_GATE_NEUTRON -eq "1" ]]; then
-            echo -e "[[post-config|\$NEUTRON_CONF]]\n[DEFAULT]\nnetwork_device_mtu=$EXTERNAL_BRIDGE_MTU" >> local.conf
+            echo -e "[[post-config|\$NEUTRON_CONF]]\n[DEFAULT]\nglobal_physnet_mtu=$EXTERNAL_BRIDGE_MTU" >> local.conf
         fi
     fi
 
@@ -659,19 +665,6 @@ else
             echo "Mysql should have been used, but there are no logs"
             exit 1
         fi
-    fi
-
-    if [[ "$DEVSTACK_GATE_TOPOLOGY" != "aio" ]] && [[ $DEVSTACK_GATE_NEUTRON -eq "1" ]]; then
-        # NOTE(afazekas): The cirros lp#1301958 does not support MTU setting via dhcp,
-        # simplest way the have tunneling working, with dvsm, without increasing the host system MTU
-        # is to decreasion the MTU on br-ex
-        # TODO(afazekas): Configure the mtu smarter on the devstack side
-        MTU_NODES=primary
-        if [[ "$DEVSTACK_GATE_NEUTRON_DVR" -eq "1" ]]; then
-            MTU_NODES=all
-        fi
-        $ANSIBLE "$MTU_NODES" -f 5 -i "$WORKSPACE/inventory" -m shell \
-                -a "sudo ip link set mtu $EXTERNAL_BRIDGE_MTU dev br-ex"
     fi
 fi
 
@@ -757,6 +750,7 @@ if [[ "$DEVSTACK_GATE_TEMPEST" -eq "1" ]]; then
         if [[ "$DEVSTACK_GATE_TEMPEST_ALL_PLUGINS" -eq "1" ]]; then
             echo "Running tempest with plugins and a custom regex filter"
             $TEMPEST_COMMAND -eall-plugin -- --concurrency=$TEMPEST_CONCURRENCY $DEVSTACK_GATE_TEMPEST_REGEX
+            sudo -H -u tempest .tox/all-plugin/bin/tempest list-plugins
         else
             echo "Running tempest with a custom regex filter"
             $TEMPEST_COMMAND -eall -- --concurrency=$TEMPEST_CONCURRENCY $DEVSTACK_GATE_TEMPEST_REGEX
@@ -764,6 +758,7 @@ if [[ "$DEVSTACK_GATE_TEMPEST" -eq "1" ]]; then
     elif [[ "$DEVSTACK_GATE_TEMPEST_ALL_PLUGINS" -eq "1" ]]; then
         echo "Running tempest all-plugins test suite"
         $TEMPEST_COMMAND -eall-plugin -- --concurrency=$TEMPEST_CONCURRENCY
+        sudo -H -u tempest .tox/all-plugin/bin/tempest list-plugins
     elif [[ "$DEVSTACK_GATE_TEMPEST_ALL" -eq "1" ]]; then
         echo "Running tempest all test suite"
         $TEMPEST_COMMAND -eall -- --concurrency=$TEMPEST_CONCURRENCY

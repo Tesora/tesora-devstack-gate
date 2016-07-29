@@ -168,7 +168,14 @@ export DEVSTACK_GATE_TEMPEST_DISABLE_TENANT_ISOLATION=${DEVSTACK_GATE_TEMPEST_DI
 # Set to 1 to enable Cinder secure delete.
 # False by default to avoid dd problems on Precise.
 # https://bugs.launchpad.net/ubuntu/+source/linux/+bug/1023755
+# TODO(mriedem): CINDER_SECURE_DELETE is deprecated in devstack as of liberty.
+# Remove after kilo-eol happens in devstack.
 export DEVSTACK_CINDER_SECURE_DELETE=${DEVSTACK_CINDER_SECURE_DELETE:-0}
+
+# Should cinder perform secure deletion of volumes?
+# Defaults to none to avoid bug 1023755. Can also be set to zero or shred.
+# Only applicable to stable/liberty+ devstack.
+export DEVSTACK_CINDER_VOLUME_CLEAR=${DEVSTACK_CINDER_VOLUME_CLEAR:-none}
 
 # Set to 1 to run neutron instead of nova network
 # Only applicable to master branch
@@ -454,7 +461,9 @@ set -x
 # Install ansible
 sudo -H pip install virtualenv
 virtualenv /tmp/ansible
-/tmp/ansible/bin/pip install ansible==$ANSIBLE_VERSION
+# NOTE(emilien): workaround to avoid installing cryptography
+# https://github.com/ansible/ansible/issues/15665
+/tmp/ansible/bin/pip install paramiko==1.16.0 ansible==$ANSIBLE_VERSION
 export ANSIBLE=/tmp/ansible/bin/ansible
 
 # Write inventory file with groupings
@@ -572,15 +581,23 @@ fi
 # devstack-vm-gate-wrap.sh will not automagically run the hooks on each node.
 # Run pre test hook if we have one
 with_timeout call_hook_if_defined "pre_test_hook"
+GATE_RETVAL=$?
+if [ $GATE_RETVAL -ne 0 ]; then
+    echo "ERROR: the pre-test setup script run by this job failed - exit code: $GATE_RETVAL"
+fi
 
 # Run the gate function
-echo "Running gate_hook"
-with_timeout "gate_hook"
-GATE_RETVAL=$?
+if [ $GATE_RETVAL -eq 0 ]; then
+    echo "Running gate_hook"
+    with_timeout "gate_hook"
+    GATE_RETVAL=$?
+    if [ $GATE_RETVAL -ne 0 ]; then
+        echo "ERROR: the main setup script run by this job failed - exit code: $GATE_RETVAL"
+    fi
+fi
 RETVAL=$GATE_RETVAL
 
 if [ $GATE_RETVAL -ne 0 ]; then
-    echo "ERROR: the main setup script run by this job failed - exit code: $GATE_RETVAL"
     echo "    please look at the relevant log files to determine the root cause"
     echo "Running devstack worlddump.py"
     sudo $BASE/new/devstack/tools/worlddump.py -d $BASE/logs

@@ -230,6 +230,31 @@ function indent {
     $@ | (while read; do echo "    $REPLY"; done)
 }
 
+# I really don't want to parse YAML with awk:
+function tesora_translate_repo {
+    local project=$1
+
+    cat << EOF > /tmp/yamlpython
+import sys
+import yaml
+sourcerepo = sys.argv[1]
+config = yaml.load(file('/etc/project-config/tesora/config.yaml'))
+repomappings = config['repo-mappings']
+found=False
+for mapping in repomappings:
+  if mapping['name'] == sourcerepo:
+    print mapping['target']
+    found=True
+if not found:
+    print sourcerepo
+EOF
+
+    translated_project = $(python /tmp/yamlpython $project)
+    rm /tmp/yamlpython
+
+    return $translated_project
+}
+
 # Attempt to fetch a git ref for a project, if that ref is not empty
 function git_fetch_at_ref {
     local project=$1
@@ -237,29 +262,7 @@ function git_fetch_at_ref {
     local mapped_project=$project
 
     if [ "$ref" != "" ]; then
-        case "$project" in
-            "openstack/trove")
-                mapped_project="tesora/tesora-trove"
-                ;;
-            "openstack/trove-integration")
-                mapped_project="tesora/tesora-trove-integration"
-                ;;
-            "openstack/python-troveclient")
-                mapped_project="tesora/tesora-python-troveclient"
-                ;;
-            "openstack/horizon")
-                mapped_project="tesora/tesora-horizon"
-                ;;
-            "openstack-infra/devstack-gate")
-                mapped_project="tesora/tesora-devstack-gate"
-                ;;
-            "openstack/requirements")
-                mapped_project="tesora/tesora-requirements"
-                ;;
-            *)
-                mapped_project=$project
-        esac
-
+        mapped_project = tesora_translate_repo($project)
         git fetch $ZUUL_URL/$mapped_project $ref
         return $?
     else

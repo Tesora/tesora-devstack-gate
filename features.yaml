@@ -11,6 +11,7 @@ config:
     EE-1.7: [default, ceilometer, glance, horizon, nova, swift, cinder, keystone]
     EE-1.8: [default, ceilometer, glance, horizon, nova, swift, cinder, keystone]
     EE-1.9: [default, ceilometer, glance, horizon, nova, swift, cinder, keystone]
+    EE-1.9-SP: [default, ceilometer, glance, horizon, nova, swift, cinder, keystone]
     EE-1.10: [default, ceilometer, glance, horizon, nova, swift, cinder, keystone]
     CE-1.4: [default, ceilometer, glance, horizon, nova, swift, cinder, keystone, heat]
     CE-1.6: [default, ceilometer, glance, horizon, nova, swift, cinder, keystone]
@@ -61,7 +62,7 @@ branches:
   # The value of ""default" is the name of the "trunk" branch
   default: master
   # Normalized branch names only here, e.g. stable/icehouse => icehouse
-  allowed: [master, ocata, mitaka, liberty, kilo, juno, icehouse, EE-1.4, EE-1.5, EE-1.6, EE-1.7, EE-1.8, EE-1.9, EE-1.10, CE-1.4, CE-1.6]
+  allowed: [master, ocata, mitaka, liberty, kilo, juno, icehouse, EE-1.4, EE-1.5, EE-1.6, EE-1.7, EE-1.8, EE-1.9, EE-1.9-SP, EE-1.10, CE-1.4, CE-1.6]
 
 features:
   default:

@@ -32,6 +32,8 @@ ANSIBLE_VERSION=${ANSIBLE_VERSION:-2.0.0.2}
 
 # sshd may have been compiled with a default path excluding */sbin
 export PATH=$PATH:/usr/local/sbin:/usr/sbin
+# When doing xtrace (set -x / set -o xtrace), provide more debug output
+export PS4='+ ${BASH_SOURCE:-}:${FUNCNAME[0]:-}:L${LINENO:-}:   '
 
 source $WORKSPACE/devstack-gate/functions.sh
 
@@ -76,10 +78,12 @@ PROJECTS="openstack/neutron-vpnaas $PROJECTS"
 PROJECTS="openstack/nova $PROJECTS"
 PROJECTS="openstack/os-apply-config $PROJECTS"
 PROJECTS="openstack/os-brick $PROJECTS"
+PROJECTS="openstack/os-client-config $PROJECTS"
 PROJECTS="openstack/os-cloud-config $PROJECTS"
 PROJECTS="openstack/os-collect-config $PROJECTS"
 PROJECTS="openstack/os-net-config $PROJECTS"
 PROJECTS="openstack/os-refresh-config $PROJECTS"
+PROJECTS="openstack/osc-lib $PROJECTS"
 PROJECTS="openstack/oslo.cache $PROJECTS"
 PROJECTS="openstack/oslo.concurrency $PROJECTS"
 PROJECTS="openstack/oslo.config $PROJECTS"
@@ -168,7 +172,14 @@ export DEVSTACK_GATE_TEMPEST_DISABLE_TENANT_ISOLATION=${DEVSTACK_GATE_TEMPEST_DI
 # Set to 1 to enable Cinder secure delete.
 # False by default to avoid dd problems on Precise.
 # https://bugs.launchpad.net/ubuntu/+source/linux/+bug/1023755
+# TODO(mriedem): CINDER_SECURE_DELETE is deprecated in devstack as of liberty.
+# Remove after kilo-eol happens in devstack.
 export DEVSTACK_CINDER_SECURE_DELETE=${DEVSTACK_CINDER_SECURE_DELETE:-0}
+
+# Should cinder perform secure deletion of volumes?
+# Defaults to none to avoid bug 1023755. Can also be set to zero or shred.
+# Only applicable to stable/liberty+ devstack.
+export DEVSTACK_CINDER_VOLUME_CLEAR=${DEVSTACK_CINDER_VOLUME_CLEAR:-none}
 
 # Set to 1 to run neutron instead of nova network
 # Only applicable to master branch
@@ -199,7 +210,7 @@ export DEVSTACK_GATE_SAHARA=${DEVSTACK_GATE_SAHARA:-0}
 export DEVSTACK_GATE_TROVE=${DEVSTACK_GATE_TROVE:-0}
 
 # Set to 0 to disable config_drive and use the metadata server instead
-export DEVSTACK_GATE_CONFIGDRIVE=${DEVSTACK_GATE_CONFIGDRIVE:-1}
+export DEVSTACK_GATE_CONFIGDRIVE=${DEVSTACK_GATE_CONFIGDRIVE:-0}
 
 # Set to 1 to enable installing test requirements
 export DEVSTACK_GATE_INSTALL_TESTONLY=${DEVSTACK_GATE_INSTALL_TESTONLY:-0}
@@ -221,10 +232,6 @@ export DEVSTACK_PROJECT_FROM_GIT=${DEVSTACK_PROJECT_FROM_GIT:-}
 # i.e. stable/juno:
 #   pullup means stable/icehouse => stable/juno
 #   forward means stable/juno => master (or stable/kilo if that's out)
-#   partial-ncpu means stable/icehouse => stable/juno but keep nova
-#       compute at stable/icehouse
-#   partial-ironic means stable/icehouse => stable/juno but keep ironic
-#       compute at stable/icehouse
 export DEVSTACK_GATE_GRENADE=${DEVSTACK_GATE_GRENADE:-}
 
 # the branch name for selecting grenade branches
@@ -280,17 +287,6 @@ if [[ -n "$DEVSTACK_GATE_GRENADE" ]]; then
                 export GRENADE_NEW_BRANCH="$GIT_BRANCH"
             fi
             ;;
-
-        # partial upgrades are like normal upgrades except they leave
-        # certain services behind. We use the base 4 operator ';&'
-        # here to fall trhough to the next conditionals
-        partial-*)
-            if [[ "$DEVSTACK_GATE_GRENADE" == "partial-ncpu" ]]; then
-                export DO_NOT_UPGRADE_SERVICES=[n-cpu]
-            elif [[ "$DEVSTACK_GATE_GRENADE" == "partial-ironic" ]]; then
-                export DO_NOT_UPGRADE_SERVICES=[ir-api,ir-cond]
-            fi
-            ;&
 
         # pullup upgrades are our normal upgrade test. Can you upgrade
         # to the current patch from the last stable.
@@ -454,7 +450,9 @@ set -x
 # Install ansible
 sudo -H pip install virtualenv
 virtualenv /tmp/ansible
-/tmp/ansible/bin/pip install ansible==$ANSIBLE_VERSION
+# NOTE(emilien): workaround to avoid installing cryptography
+# https://github.com/ansible/ansible/issues/15665
+/tmp/ansible/bin/pip install paramiko==1.16.0 ansible==$ANSIBLE_VERSION
 export ANSIBLE=/tmp/ansible/bin/ansible
 
 # Write inventory file with groupings
@@ -572,15 +570,23 @@ fi
 # devstack-vm-gate-wrap.sh will not automagically run the hooks on each node.
 # Run pre test hook if we have one
 with_timeout call_hook_if_defined "pre_test_hook"
+GATE_RETVAL=$?
+if [ $GATE_RETVAL -ne 0 ]; then
+    echo "ERROR: the pre-test setup script run by this job failed - exit code: $GATE_RETVAL"
+fi
 
 # Run the gate function
-echo "Running gate_hook"
-with_timeout "gate_hook"
-GATE_RETVAL=$?
+if [ $GATE_RETVAL -eq 0 ]; then
+    echo "Running gate_hook"
+    with_timeout "gate_hook"
+    GATE_RETVAL=$?
+    if [ $GATE_RETVAL -ne 0 ]; then
+        echo "ERROR: the main setup script run by this job failed - exit code: $GATE_RETVAL"
+    fi
+fi
 RETVAL=$GATE_RETVAL
 
 if [ $GATE_RETVAL -ne 0 ]; then
-    echo "ERROR: the main setup script run by this job failed - exit code: $GATE_RETVAL"
     echo "    please look at the relevant log files to determine the root cause"
     echo "Running devstack worlddump.py"
     sudo $BASE/new/devstack/tools/worlddump.py -d $BASE/logs

@@ -171,6 +171,9 @@ function remaining_time {
 
 # Create a script to reproduce this build
 function reproduce {
+    local xtrace=$(set +o | grep xtrace)
+    set +o xtrace
+
     JOB_PROJECTS=$1
     cat > $WORKSPACE/logs/reproduce.sh <<EOF
 #!/bin/bash -xe
@@ -222,6 +225,7 @@ cp devstack-gate/devstack-vm-gate-wrap.sh ./safe-devstack-vm-gate-wrap.sh
 EOF
 
     chmod a+x $WORKSPACE/logs/reproduce.sh
+    $xtrace
 }
 
 # indent the output of a command 4 spaces, useful for distinguishing
@@ -246,6 +250,9 @@ function git_fetch_at_ref {
                 ;;
             "openstack/python-troveclient")
                 mapped_project="tesora/tesora-python-troveclient"
+                ;;
+            "openstack/trove-dashboard")
+                mapped_project="tesora/tesora-trove-dashboard"
                 ;;
             "openstack/horizon")
                 mapped_project="tesora/tesora-horizon"
@@ -353,6 +360,10 @@ function git_clone_and_cd {
                 git clone https://github.com/Tesora/tesora-python-troveclient
                 ln -s tesora-python-troveclient python-troveclient
                 ;;
+            "openstack/trove-dashboard")
+                git clone https://github.com/Tesora/tesora-trove-dashboard
+                ln -s tesora-trove-dashboard trove-dashboard
+                ;;
             "openstack/horizon")
                 git clone https://github.com/Tesora/tesora-horizon
                 ln -s tesora-horizon horizon
@@ -436,9 +447,15 @@ function fix_disk_layout {
             # Don't use sparse device to avoid wedging when disk space and
             # memory are both unavailable.
             local swapfile='/root/swapfile'
+            sudo touch ${swapfile}
             swapdiff=$(( $SWAPSIZE - $swapcurrent ))
 
-            sudo dd if=/dev/zero of=${swapfile} bs=1M count=${swapdiff}
+            if sudo df -T ${swapfile} | grep -q ext ; then
+                sudo fallocate -l ${swapdiff}M ${swapfile}
+            else
+                # Cannot fallocate on filesystems like XFS
+                sudo dd if=/dev/zero of=${swapfile} bs=1M count=${swapdiff}
+            fi
             sudo chmod 600 ${swapfile}
             sudo mkswap ${swapfile}
             sudo swapon ${swapfile}
@@ -533,6 +550,9 @@ function setup_project {
             ;;
         "openstack/python-troveclient")
             git_remote_set_url origin https://github.com/Tesora/tesora-python-troveclient
+            ;;
+        "openstack/trove-dashboard")
+            git_remote_set_url origin https://github.com/Tesora/tesora-trove-dashboard
             ;;
         "openstack/horizon")
             git_remote_set_url origin https://github.com/Tesora/tesora-horizon
@@ -807,6 +827,39 @@ function process_testr_artifacts {
     fi
 }
 
+function process_stackviz {
+    local project=$1
+    local path_prefix=${2:-new}
+
+    local project_path=$BASE/$path_prefix/$project
+    local log_path=$BASE/logs
+    if [[ "$path_prefix" != "new" ]]; then
+        log_path=$BASE/logs/$path_prefix
+    fi
+
+    local stackviz_path=/opt/stackviz
+    if [ -d $stackviz_path/build ]; then
+        sudo pip install -U $stackviz_path
+
+        # static html+js should be prebuilt during image creation
+        cp -r $stackviz_path/build $log_path/stackviz
+
+        pushd $project_path
+        if [ -f $BASE/new/dstat-csv.txt ]; then
+            sudo testr last --subunit | stackviz-export \
+                --dstat $BASE/new/dstat-csv.txt \
+                --end --stdin \
+                $log_path/stackviz/data
+        else
+            sudo testr last --subunit | stackviz-export \
+                --env --stdin \
+                $log_path/stackviz/data
+        fi
+        sudo chown -R $USER:$USER $log_path/stackviz
+        popd
+    fi
+}
+
 function cleanup_host {
     # TODO: clean this up to be errexit clean
     local errexit=$(set +o | grep errexit)
@@ -906,8 +959,14 @@ function cleanup_host {
         sudo cp $BASE/old/devstacklog.txt $BASE/logs/old/
         sudo cp $BASE/old/devstack/localrc $BASE/logs/old/localrc.txt
         sudo cp $BASE/old/tempest/etc/tempest.conf $BASE/logs/old/tempest_conf.txt
-        if -f [ $BASE/old/devstack/tempest.log ] ; then
+        if [ -f $BASE/old/devstack/tempest.log ] ; then
             sudo cp $BASE/old/devstack/tempest.log $BASE/logs/old/verify_tempest_conf.log
+        fi
+
+        # Copy Ironic nodes console logs if they exist
+        if [ -d $BASE/old/ironic-bm-logs ] ; then
+            sudo mkdir -p $BASE/logs/old/ironic-bm-logs
+            sudo cp $BASE/old/ironic-bm-logs/*.log $BASE/logs/old/ironic-bm-logs/
         fi
 
         # dstat CSV log
@@ -973,6 +1032,9 @@ function cleanup_host {
 
     # Copy tempest config file
     sudo cp $BASE/new/tempest/etc/tempest.conf $NEWLOGTARGET/tempest_conf.txt
+    if [ -f $BASE/new/tempest/etc/accounts.yaml ] ; then
+        sudo cp $BASE/new/tempest/etc/accounts.yaml $NEWLOGTARGET/accounts_yaml.txt
+    fi
 
     # Copy dstat CSV log if it exists
     if [ -f $BASE/new/dstat-csv.log ]; then
@@ -981,9 +1043,14 @@ function cleanup_host {
 
     sudo iptables-save > $WORKSPACE/iptables.txt
     df -h > $WORKSPACE/df.txt
-    pip freeze > $WORKSPACE/pip-freeze.txt
-    sudo mv $WORKSPACE/iptables.txt $WORKSPACE/df.txt \
-        $WORKSPACE/pip-freeze.txt $BASE/logs/
+    sudo mv $WORKSPACE/iptables.txt $WORKSPACE/df.txt $BASE/logs/
+
+    for py_ver in 2 3; do
+        if [[ `which python${py_ver}` ]]; then
+            python${py_ver} -m pip freeze > $WORKSPACE/pip${py_ver}-freeze.txt
+            sudo mv $WORKSPACE/pip${py_ver}-freeze.txt $BASE/logs/
+        fi
+    done
 
     if [ `command -v dpkg` ]; then
         dpkg -l> $WORKSPACE/dpkg-l.txt
@@ -995,6 +1062,8 @@ function cleanup_host {
         gzip -9 rpm-qa.txt
         sudo mv $WORKSPACE/rpm-qa.txt.gz $BASE/logs/
     fi
+
+    process_stackviz tempest
 
     process_testr_artifacts tempest
     process_testr_artifacts tempest old
@@ -1020,8 +1089,9 @@ function cleanup_host {
 
     # Make sure the current user can read all the logs and configs
     sudo chown -R $USER:$USER $BASE/logs/
-    sudo chmod a+r $BASE/logs/ $BASE/logs/etc
-
+    # (note X not x ... execute/search only if the file is a directory
+    # or already has execute permission for some user)
+    sudo chmod -R a+rX $BASE/logs/
 
     # Collect all the deprecation related messages into a single file.
     # strip out date(s), timestamp(s), pid(s), context information and
@@ -1126,7 +1196,7 @@ function enable_netconsole {
     # out to the world is specify the default gw as the remote
     # destination.
     local default_gw=$(ip route | grep default | awk '{print $3}')
-    local gw_mac=$(arp $default_gw | grep $default_gw | awk '{print $3}')
+    local gw_mac=$(arp -n $default_gw | grep $default_gw | awk '{print $3}')
     local gw_dev=$(ip route | grep default | awk '{print $5}')
 
     # turn up message output
@@ -1213,7 +1283,7 @@ function ovs_vxlan_bridge {
         fi
     fi
     for node_ip in $peer_ips; do
-        (( offset++ ))
+        offset=$(( offset+1 ))
         # For reference on how to setup a tunnel using OVS see:
         #   http://openvswitch.org/support/config-cookbooks/port-tunneling/
         # The command below is equivalent to the sequence of ip/brctl commands
@@ -1263,4 +1333,9 @@ function with_timeout {
 # Iniset imported from devstack
 function iniset {
     $(source $BASE/new/devstack/inc/ini-config; iniset $@)
+}
+
+# Iniget imported from devstack
+function iniget {
+    $(source $BASE/new/devstack/inc/ini-config; iniget $@)
 }

@@ -33,9 +33,10 @@ source $TOP_DIR/functions.sh
 echo $PPID > $WORKSPACE/gate.pid
 source `dirname "$(readlink -f "$0")"`/functions.sh
 
+# Need to set FIXED_RANGE for pre-ocata devstack
 UNIQUE_OCTETS=$(hostname -I | sed 's/[0-9a-z][0-9a-z]*:.*:[0-9a-z][0-9a-z]*//g' | sed 's/ /\n/g' | sed '/^$/d' | sort -bu | head -1 | cut -d'.' -f 3-4)
-
 FIXED_RANGE=${DEVSTACK_GATE_FIXED_RANGE:-10.$UNIQUE_OCTETS.0/24}
+IPV4_ADDRS_SAFE_TO_USE=${DEVSTACK_GATE_IPV4_ADDRS_SAFE_TO_USE:-${DEVSTACK_GATE_FIXED_RANGE:-10.$UNIQUE_OCTETS.0/23}}
 FLOATING_RANGE=${DEVSTACK_GATE_FLOATING_RANGE:-172.24.5.0/24}
 PUBLIC_NETWORK_GATEWAY=${DEVSTACK_GATE_PUBLIC_NETWORK_GATEWAY:-172.24.5.1}
 FIXED_NETWORK_SIZE=${DEVSTACK_GATE_FIXED_NETWORK_SIZE:-256}
@@ -60,13 +61,19 @@ LOCAL_MTU=$(ip link show | sed -ne 's/.*mtu \([0-9]\+\).*/\1/p' | sort -n | head
 EXTERNAL_BRIDGE_MTU=$((LOCAL_MTU - 50))
 
 function setup_ssh {
+    # Copy the SSH key from /etc/nodepool/id_rsa{.pub} to the specified
+    # directory on 'all' the nodes. 'all' the nodes consists of the primary
+    # node and all of the subnodes.
     local path=$1
+    local dest_file=${2:-id_rsa}
     $ANSIBLE all --sudo -f 5 -i "$WORKSPACE/inventory" -m file \
         -a "path='$path' mode=0700 state=directory"
     $ANSIBLE all --sudo -f 5 -i "$WORKSPACE/inventory" -m copy \
         -a "src=/etc/nodepool/id_rsa.pub dest='$path/authorized_keys' mode=0600"
     $ANSIBLE all --sudo -f 5 -i "$WORKSPACE/inventory" -m copy \
-        -a "src=/etc/nodepool/id_rsa dest='$path/id_rsa' mode=0400"
+        -a "src=/etc/nodepool/id_rsa.pub dest='$path/${dest_file}.pub' mode=0600"
+    $ANSIBLE all --sudo -f 5 -i "$WORKSPACE/inventory" -m copy \
+        -a "src=/etc/nodepool/id_rsa dest='$path/${dest_file}' mode=0400"
 }
 
 function setup_nova_net_networking {
@@ -135,6 +142,33 @@ EOF
                         $sub_nodes
     fi
 
+    if [[ "$DEVSTACK_GATE_IRONIC" -eq '1' ]]; then
+        # NOTE(vsaienko) Ironic VMs will be connected to this bridge
+        # in order to have access to VMs on another nodes.
+        ovs_vxlan_bridge "br_ironic_vxlan" $primary_node "False" 128 \
+            $sub_nodes
+
+        cat <<EOF >>"$sub_localrc"
+HOST_TOPOLOGY=multinode
+HOST_TOPOLOGY_ROLE=subnode
+# NOTE(vsaienko) we assume for now that we using only 1 subnode,
+# each subnode should have different switch name (bridge) as it is used
+# by networking-generic-switch to uniquely identify switch.
+IRONIC_VM_NETWORK_BRIDGE=sub1brbm
+OVS_PHYSICAL_BRIDGE=sub1brbm
+ENABLE_TENANT_TUNNELS=False
+IRONIC_KEY_FILE="$BASE/new/.ssh/ironic_key"
+EOF
+        cat <<EOF >>"$localrc"
+HOST_TOPOLOGY=multinode
+HOST_TOPOLOGY_ROLE=primary
+HOST_TOPOLOGY_SUBNODES="$sub_nodes"
+IRONIC_KEY_FILE="$BASE/new/.ssh/ironic_key"
+GENERIC_SWITCH_KEY_FILE="$BASE/new/.ssh/ironic_key"
+ENABLE_TENANT_TUNNELS=False
+EOF
+    fi
+
     echo "Preparing cross node connectivity"
     setup_ssh $BASE/new/.ssh
     setup_ssh ~root/.ssh
@@ -164,6 +198,16 @@ EOF
         remote_copy_file /tmp/tmp_sub_localrc $NODE:$devstack_dir/localrc
         remote_copy_file $localconf $NODE:$localconf
     done
+
+    # NOTE(vsaienko) we need to have ssh connection among nodes to manage
+    # VMs from ironic-conductor or setup networking from networking-generic-switch
+    if [[ "$DEVSTACK_GATE_IRONIC" -eq '1' ]]; then
+        echo "Copy ironic key among nodes"
+        # NOTE(vsaienko) setup_ssh() set 700 to all parent directories when they doesn't
+        # exist. Keep ironic keys in other directory than /opt/stack/data to avoid setting
+        # 700 on /opt/stack/data
+        setup_ssh $BASE/new/.ssh ironic_key
+    fi
 }
 
 function setup_networking {
@@ -218,7 +262,13 @@ function setup_localrc {
 
         # TODO(afazekas): Move to the feature grid
         if [[ $role = sub ]]; then
-            MY_ENABLED_SERVICES="n-cpu,ceilometer-acompute,dstat,c-vol,c-bak"
+            MY_ENABLED_SERVICES="n-cpu,ceilometer-acompute,dstat"
+            if [[ "$original_enabled_services" =~ "c-api" ]]; then
+                MY_ENABLED_SERVICES+=",c-vol,c-bak"
+            fi
+            if [[ "$original_enabled_services" =~ "tls-proxy" ]]; then
+                MY_ENABLED_SERVICES+=",tls-proxy"
+            fi
             if [[ "$DEVSTACK_GATE_NEUTRON" -eq "1" ]]; then
                 MY_ENABLED_SERVICES+=",q-agt"
                 if [[ "$DEVSTACK_GATE_NEUTRON_DVR" -eq "1" ]]; then
@@ -230,6 +280,9 @@ function setup_localrc {
                 fi
             else
                 MY_ENABLED_SERVICES+=",n-net,n-api-meta"
+            fi
+            if [[ "$DEVSTACK_GATE_IRONIC" -eq "1" ]]; then
+                MY_ENABLED_SERVICES+=",ir-api,ir-cond"
             fi
         fi
 
@@ -288,13 +341,13 @@ ROOTSLEEP=0
 ERROR_ON_CLONE=True
 ENABLED_SERVICES=$MY_ENABLED_SERVICES
 SKIP_EXERCISES=$SKIP_EXERCISES
-SERVICE_HOST=127.0.0.1
 # Screen console logs will capture service logs.
 SYSLOG=False
 SCREEN_LOGDIR=$BASE/$localrc_oldnew/screen-logs
 LOGFILE=$BASE/$localrc_oldnew/devstacklog.txt
 VERBOSE=True
 FIXED_RANGE=$FIXED_RANGE
+IPV4_ADDRS_SAFE_TO_USE=$IPV4_ADDRS_SAFE_TO_USE
 FLOATING_RANGE=$FLOATING_RANGE
 PUBLIC_NETWORK_GATEWAY=$PUBLIC_NETWORK_GATEWAY
 FIXED_NETWORK_SIZE=$FIXED_NETWORK_SIZE
@@ -634,6 +687,20 @@ else
     $ANSIBLE primary -f 5 -i "$WORKSPACE/inventory" -m shell \
         -a "cd '$BASE/new/devstack' && sudo -H -u stack stdbuf -oL -eL ./stack.sh executable=/bin/bash" \
         &> "$WORKSPACE/logs/devstack-early.txt"
+    if [ -d "$BASE/data/CA" ] && [ -f "$BASE/data/ca-bundle.pem" ] ; then
+        # Sync any data files which include certificates to be used if
+        # TLS is enabled
+        $ANSIBLE subnodes -f 5 -i "$WORKSPACE/inventory" --sudo -m file \
+            -a "path='$BASE/data' state=directory owner=stack group=stack mode=0755"
+        $ANSIBLE subnodes -f 5 -i "$WORKSPACE/inventory" --sudo -m file \
+            -a "path='$BASE/data/CA' state=directory owner=stack group=stack mode=0755"
+        $ANSIBLE subnodes -f 5 -i "$WORKSPACE/inventory" \
+            --sudo -m synchronize \
+            -a "mode=push src='$BASE/data/ca-bundle.pem' dest='$BASE/data/ca-bundle.pem'"
+        sudo $ANSIBLE subnodes -f 5 -i "$WORKSPACE/inventory" \
+            --sudo -u $USER -m synchronize \
+            -a "mode=push src='$BASE/data/CA' dest='$BASE/data'"
+    fi
     # Run non controller setup after controller is up. This is necessary
     # because services like nova apparently expect to have the controller in
     # place before anything else.
@@ -759,11 +826,11 @@ if [[ "$DEVSTACK_GATE_TEMPEST" -eq "1" ]]; then
     if [[ "$DEVSTACK_GATE_TEMPEST_REGEX" != "" ]] ; then
         if [[ "$DEVSTACK_GATE_TEMPEST_ALL_PLUGINS" -eq "1" ]]; then
             echo "Running tempest with plugins and a custom regex filter"
-            $TEMPEST_COMMAND -eall-plugin -- --concurrency=$TEMPEST_CONCURRENCY $DEVSTACK_GATE_TEMPEST_REGEX
+            $TEMPEST_COMMAND -eall-plugin -- $DEVSTACK_GATE_TEMPEST_REGEX --concurrency=$TEMPEST_CONCURRENCY
             sudo -H -u tempest .tox/all-plugin/bin/tempest list-plugins
         else
             echo "Running tempest with a custom regex filter"
-            $TEMPEST_COMMAND -eall -- --concurrency=$TEMPEST_CONCURRENCY $DEVSTACK_GATE_TEMPEST_REGEX
+            $TEMPEST_COMMAND -eall -- $DEVSTACK_GATE_TEMPEST_REGEX --concurrency=$TEMPEST_CONCURRENCY
         fi
     elif [[ "$DEVSTACK_GATE_TEMPEST_ALL_PLUGINS" -eq "1" ]]; then
         echo "Running tempest all-plugins test suite"

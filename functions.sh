@@ -130,9 +130,13 @@ function network_sanity_check {
         _http_check $pypi_url
     fi
 
-    # rax ubuntu mirror
-    _ping_check mirror.rackspace.com
-    _http_check http://mirror.rackspace.com/ubuntu/dists/trusty/Release.gpg
+    # AFS ubuntu mirror
+    source /etc/nodepool/provider
+    NODEPOOL_MIRROR_HOST=${NODEPOOL_MIRROR_HOST:-mirror.$NODEPOOL_REGION.$NODEPOOL_CLOUD.openstack.org}
+    NODEPOOL_MIRROR_HOST=$(echo $NODEPOOL_MIRROR_HOST|tr '[:upper:]' '[:lower:]')
+
+    _ping_check $NODEPOOL_MIRROR_HOST
+    _http_check http://$NODEPOOL_MIRROR_HOST/ubuntu/dists/trusty/Release
 }
 
 # create the start timer for when the job began
@@ -181,8 +185,12 @@ function reproduce {
 # Script to reproduce devstack-gate run.
 #
 # Prerequisites:
-# - Fresh install of Ubuntu Trusty, with basic internet access
-# - Must have python-dev, build-essential, and git installed from apt
+# - Fresh install of current Ubuntu LTS, with basic internet access.
+#   Note we can and do run devstack-gate on other distros double check
+#   where your job ran (will be recorded in console.html) to reproduce
+#   as accurately as possible.
+# - Must have python-all-dev, build-essential, git, libssl-dev installed
+#   from apt, or their equivalents on other distros.
 # - Must have virtualenv installed from pip
 # - Must be run as root
 #
@@ -193,12 +201,17 @@ EOF
 
     # first get all keys that match our filter and then output the whole line
     # that will ensure that multi-line env vars are set properly
-    for KEY in $(printenv | grep '\(DEVSTACK\|ZUUL\)' | sed 's/\(.*\)=.*/\1/'); do
+    for KEY in $(printenv -0 | grep -z -Z '\(DEVSTACK\|ZUUL\)' | sed -z -n 's/^\([^=]\+\)=.*/\1\n/p'); do
         echo "declare -x ${KEY}=\"${!KEY}\"" >> $WORKSPACE/logs/reproduce.sh
     done
     if [ -n "$JOB_PROJECTS" ] ; then
         echo "declare -x PROJECTS=\"$JOB_PROJECTS\"" >> $WORKSPACE/logs/reproduce.sh
     fi
+    for fun in pre_test_hook gate_hook post_test_hook ; do
+        if function_exists $fun ; then
+            declare -fp $fun >> $WORKSPACE/logs/reproduce.sh
+        fi
+    done
 
     cat >> $WORKSPACE/logs/reproduce.sh <<EOF
 
@@ -253,9 +266,6 @@ function git_fetch_at_ref {
                 ;;
             "openstack/trove-dashboard")
                 mapped_project="tesora/tesora-trove-dashboard"
-                ;;
-            "openstack/horizon")
-                mapped_project="tesora/tesora-horizon"
                 ;;
             "openstack-infra/devstack-gate")
                 mapped_project="tesora/tesora-devstack-gate"
@@ -363,10 +373,6 @@ function git_clone_and_cd {
             "openstack/trove-dashboard")
                 git clone https://github.com/Tesora/tesora-trove-dashboard
                 ln -s tesora-trove-dashboard trove-dashboard
-                ;;
-            "openstack/horizon")
-                git clone https://github.com/Tesora/tesora-horizon
-                ln -s tesora-horizon horizon
                 ;;
             "openstack-infra/devstack-gate")
                 git clone https://github.com/Tesora/tesora-devstack-gate
@@ -554,9 +560,6 @@ function setup_project {
         "openstack/trove-dashboard")
             git_remote_set_url origin https://github.com/Tesora/tesora-trove-dashboard
             ;;
-        "openstack/horizon")
-            git_remote_set_url origin https://github.com/Tesora/tesora-horizon
-            ;;
         "openstack-infra/devstack-gate")
             git_remote_set_url origin https://github.com/Tesora/tesora-devstack-gate
             ;;
@@ -571,6 +574,8 @@ function setup_project {
             if [ "$branch" == "stable/EE-1.4" ]; then
                 branch="stable/kilo"
             elif [ "$branch" == "dev/CE-1.4" ]; then
+                branch="stable/kilo"
+            elif [ "$branch" == "stable/EE-1.5" ]; then
                 branch="stable/kilo"
             elif [ "$branch" == "dev/EE-1.5" ]; then
                 branch="stable/kilo"
@@ -589,8 +594,6 @@ function setup_project {
             elif [ "$branch" == "dev/EE-1.10" ]; then
                 # eventually, branch="stable/newton"
                 branch="master"
-            elif [ "$branch" == "stable/EE-1.5" ]; then
-                branch="stable/kilo"
             fi
 
     esac
@@ -695,16 +698,6 @@ function setup_host {
     # Enabled detailed logging, since output of this function is redirected
     local xtrace=$(set +o | grep xtrace)
     set -o xtrace
-
-    echo "What's our kernel?"
-    uname -a
-
-    # capture # of cpus
-    echo "NProc has discovered $(nproc) CPUs"
-    cat /proc/cpuinfo
-
-    # Capture locale configuration
-    locale
 
     # This is necessary to keep sudo from complaining
     fix_etc_hosts
@@ -957,6 +950,7 @@ function cleanup_host {
         find $BASE/old/screen-logs -type l -print0 | \
             xargs -0 -I {} sudo cp {} $BASE/logs/old
         sudo cp $BASE/old/devstacklog.txt $BASE/logs/old/
+        sudo cp $BASE/old/devstacklog.txt.summary $BASE/logs/old/devstacklog.summary.txt
         sudo cp $BASE/old/devstack/localrc $BASE/logs/old/localrc.txt
         sudo cp $BASE/old/tempest/etc/tempest.conf $BASE/logs/old/tempest_conf.txt
         if [ -f $BASE/old/devstack/tempest.log ] ; then
@@ -1013,6 +1007,7 @@ function cleanup_host {
     find $BASE/new/screen-logs -type l -print0 | \
         xargs -0 -I {} sudo cp {} $NEWLOGTARGET/
     sudo cp $BASE/new/devstacklog.txt $NEWLOGTARGET/
+    sudo cp $BASE/new/devstacklog.txt.summary $NEWLOGTARGET/devstacklog.summary.txt
     sudo cp $BASE/new/devstack/localrc $NEWLOGTARGET/localrc.txt
     if [ -f $BASE/new/devstack/tempest.log ]; then
         sudo cp $BASE/new/devstack/tempest.log $NEWLOGTARGET/verify_tempest_conf.log
@@ -1027,7 +1022,7 @@ function cleanup_host {
     # Copy Ironic nodes console logs if they exist
     if [ -d $BASE/new/ironic-bm-logs ] ; then
         sudo mkdir -p $BASE/logs/ironic-bm-logs
-        sudo cp $BASE/new/ironic-bm-logs/*.log $BASE/logs/ironic-bm-logs/
+        sudo cp -r $BASE/new/ironic-bm-logs/* $BASE/logs/ironic-bm-logs/
     fi
 
     # Copy tempest config file
@@ -1087,11 +1082,22 @@ function cleanup_host {
         sudo cp -r /var/log/openvswitch $BASE/logs/
     fi
 
+    # glusterfs logs and config
+    if [ -d /var/log/glusterfs ] ; then
+        sudo cp -r /var/log/glusterfs $BASE/logs/
+    fi
+    if [ -f /etc/glusterfs/glusterd.vol ] ; then
+        sudo cp /etc/glusterfs/glusterd.vol $BASE/logs/
+    fi
+
     # Make sure the current user can read all the logs and configs
-    sudo chown -R $USER:$USER $BASE/logs/
+    sudo chown -RL $USER:$USER $BASE/logs/
     # (note X not x ... execute/search only if the file is a directory
     # or already has execute permission for some user)
-    sudo chmod -R a+rX $BASE/logs/
+    sudo find $BASE/logs/ -exec chmod a+rX  {} \;
+    # Remove all broken symlinks, which point to non existing files
+    # They could be copied by rsync
+    sudo find $BASE/logs/ -type l -exec test ! -e {} \; -delete
 
     # Collect all the deprecation related messages into a single file.
     # strip out date(s), timestamp(s), pid(s), context information and
@@ -1133,14 +1139,6 @@ function cleanup_host {
         for X in `find $BASE/logs/rabbitmq -type f` ; do
             mv "$X" "${X/@/_at_}"
         done
-    fi
-
-    # glusterfs logs and config
-    if [ -d /var/log/glusterfs ] ; then
-        sudo cp -r /var/log/glusterfs $BASE/logs/
-    fi
-    if [ -f /etc/glusterfs/glusterd.vol ] ; then
-        sudo cp /etc/glusterfs/glusterd.vol $BASE/logs/
     fi
 
     # final memory usage and process list
@@ -1268,6 +1266,8 @@ function ovs_vxlan_bridge {
         shift 4
     fi
     local peer_ips=$@
+    # neutron uses 1:1000 with default devstack configuration, avoid overlap
+    local additional_vni_offset=1000000
     eval $install_ovs_deps
     # create a bridge, just like you would with 'brctl addbr'
     # if the bridge exists, --may-exist prevents ovs from returning an error
@@ -1282,8 +1282,10 @@ function ovs_vxlan_bridge {
                     dev ${bridge_name}
         fi
     fi
+    sudo ip link set dev $bridge_name up
     for node_ip in $peer_ips; do
         offset=$(( offset+1 ))
+        vni=$(( offset + additional_vni_offset ))
         # For reference on how to setup a tunnel using OVS see:
         #   http://openvswitch.org/support/config-cookbooks/port-tunneling/
         # The command below is equivalent to the sequence of ip/brctl commands
@@ -1297,7 +1299,7 @@ function ovs_vxlan_bridge {
             ${bridge_name}_${node_ip} \
             -- set interface ${bridge_name}_${node_ip} type=vxlan \
             options:remote_ip=${node_ip} \
-            options:key=${offset} \
+            options:key=${vni} \
             options:local_ip=${host_ip}
         # Now complete the vxlan tunnel setup for the Compute Node:
         #  Similarly this establishes the tunnel in the reverse direction
@@ -1308,7 +1310,7 @@ function ovs_vxlan_bridge {
             ${bridge_name}_${host_ip} \
             -- set interface ${bridge_name}_${host_ip} type=vxlan \
             options:remote_ip=${host_ip} \
-            options:key=${offset} \
+            options:key=${vni} \
             options:local_ip=${node_ip}
         if [[ "$set_ips" == "True" ]] ; then
             if ! remote_command $node_ip sudo ip addr show dev ${bridge_name} | \
@@ -1318,6 +1320,7 @@ function ovs_vxlan_bridge {
                         dev ${bridge_name}
             fi
         fi
+        remote_command $node_ip sudo ip link set dev $bridge_name up
     done
 }
 

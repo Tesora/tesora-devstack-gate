@@ -254,9 +254,6 @@ function git_fetch_at_ref {
             "openstack/trove-dashboard")
                 mapped_project="tesora/tesora-trove-dashboard"
                 ;;
-            "openstack/horizon")
-                mapped_project="tesora/tesora-horizon"
-                ;;
             "openstack-infra/devstack-gate")
                 mapped_project="tesora/tesora-devstack-gate"
                 ;;
@@ -363,10 +360,6 @@ function git_clone_and_cd {
             "openstack/trove-dashboard")
                 git clone https://github.com/Tesora/tesora-trove-dashboard
                 ln -s tesora-trove-dashboard trove-dashboard
-                ;;
-            "openstack/horizon")
-                git clone https://github.com/Tesora/tesora-horizon
-                ln -s tesora-horizon horizon
                 ;;
             "openstack-infra/devstack-gate")
                 git clone https://github.com/Tesora/tesora-devstack-gate
@@ -553,9 +546,6 @@ function setup_project {
             ;;
         "openstack/trove-dashboard")
             git_remote_set_url origin https://github.com/Tesora/tesora-trove-dashboard
-            ;;
-        "openstack/horizon")
-            git_remote_set_url origin https://github.com/Tesora/tesora-horizon
             ;;
         "openstack-infra/devstack-gate")
             git_remote_set_url origin https://github.com/Tesora/tesora-devstack-gate

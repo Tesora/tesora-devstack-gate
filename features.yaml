@@ -1,7 +1,7 @@
 config:
   default:
-    master: [default, ceilometer, glance, horizon, nova, swift, cinder, keystone]
-    ocata: [default, ceilometer, glance, horizon, nova, swift, cinder, keystone]
+    master: [default, ceilometer, glance, horizon, nova, placement, swift, cinder, keystone]
+    ocata: [default, ceilometer, glance, horizon, nova, placement, swift, cinder, keystone]
     newton: [default, ceilometer, glance, horizon, nova, swift, cinder, keystone]
     mitaka: [default, ceilometer, glance, horizon, nova, swift, cinder, keystone]
     liberty: [default, ceilometer, glance, horizon, nova, swift, cinder, keystone]
@@ -60,6 +60,8 @@ config:
     features: [tlsproxy]
   cinder_mn_grenade:
     features: [cinder-mn-grenade]
+  neutron_dvr:
+    features: [neutron-dvr]
 
 branches:
   # The value of ""default" is the name of the "trunk" branch
@@ -67,7 +69,7 @@ branches:
   # Normalized branch names only here, e.g. stable/icehouse => icehouse
   allowed: [master, ocata, newton, mitaka, liberty, kilo, juno, icehouse, EE-1.4, EE-1.5, EE-1.6, EE-1.7, EE-1.8, EE-1.9, EE-1.9-SP, EE-1.10, CE-1.4, CE-1.6]
 
-features:
+primary:
   default:
     base:
       services: [mysql, rabbit, dstat]
@@ -90,7 +92,7 @@ features:
 
   nova:
     base:
-      services: [n-api, n-cond, n-cpu, n-crt, n-net, n-obj, n-sch]
+      services: [n-api, n-cauth, n-cond, n-cpu, n-crt, n-net, n-novnc, n-obj, n-sch]
     icehouse:
       compute-ext:
 
@@ -102,6 +104,10 @@ features:
     base:
       services: [n-cell]
       rm-compute-ext: [agregates, hosts]
+
+  placement:
+    base:
+      services: [placement-api]
 
   neutron:
     base:
@@ -117,6 +123,10 @@ features:
       services: [q-lbaas]
     kilo:
       services: [q-vpn]
+
+  neutron-dvr:
+    base:
+      services: []
 
   swift:
     base:
@@ -180,6 +190,81 @@ features:
   ceph:
     base:
       services: [ceph]
+
+  tlsproxy:
+    base:
+      services: [tls-proxy]
+    # TLS proxy didn't work properly until ocata
+    liberty:
+      rm-services: [tls-proxy]
+    mitaka:
+      rm-services: [tls-proxy]
+    newton:
+      rm-services: [tls-proxy]
+
+subnode:
+  default:
+    base:
+      services: [dstat]
+
+  ceilometer:
+    base:
+      services: [ceilometer-acompute]
+
+  cinder:
+    base:
+      services: [c-vol, c-bak]
+
+  cinder-mn-grenade:
+    base:
+      services: []
+
+  glance:
+    base:
+      services: []
+
+  horizon:
+    base:
+      services: []
+
+  ironic:
+    base:
+      rm-services: [c-vol, c-bak]
+      services: [ir-api, ir-cond]
+
+  keystone:
+    base:
+      services: []
+
+  neutron:
+    base:
+      rm-services: [n-net, n-api-meta]
+      services: [q-agt]
+
+  neutron-adv:
+    base:
+      services: []
+
+  neutron-dvr:
+    base:
+      rm-services: [n-net, n-api-meta]
+      services: [q-agt, q-l3, q-meta]
+
+  nova:
+    base:
+      services: [n-cpu, n-net, n-api-meta]
+
+  placement:
+    base:
+      services: [placement-client]
+
+  swift:
+    base:
+      services: []
+
+  tempest:
+    base:
+      services: []
 
   tlsproxy:
     base:

@@ -29,11 +29,18 @@ GIT_BRANCH=${GIT_BRANCH:-master}
 # possible that new ansible releases can break us. As such we should
 # be very deliberate about which ansible we use.
 ANSIBLE_VERSION=${ANSIBLE_VERSION:-2.2.0.0}
+export DSTOOLS_VERSION=${DSTOOLS_VERSION:-0.1.4}
 
 # sshd may have been compiled with a default path excluding */sbin
 export PATH=$PATH:/usr/local/sbin:/usr/sbin
 # When doing xtrace (set -x / set -o xtrace), provide more debug output
 export PS4='+ ${BASH_SOURCE:-}:${FUNCNAME[0]:-}:L${LINENO:-}:   '
+
+#check to see if WORKSPACE var is defined
+if [ -z ${WORKSPACE} ]; then
+    echo "The 'WORKSPACE' variable is undefined. It must be defined for this script to work"
+    exit 1
+fi
 
 source $WORKSPACE/devstack-gate/functions.sh
 
@@ -436,6 +443,11 @@ export DEVSTACK_GATE_TOPOLOGY=${DEVSTACK_GATE_TOPOLOGY:-aio}
 # for jobs that know exactly which repos they need.
 export DEVSTACK_GATE_PROJECTS_OVERRIDE=${DEVSTACK_GATE_PROJECTS_OVERRIDE:-""}
 
+# Set this to "True" to force devstack to pick python 3.x. "False" will cause
+# devstack to pick python 2.x. We should leave this empty for devstack to
+# pick the default.
+export DEVSTACK_GATE_USE_PYTHON3=${DEVSTACK_GATE_USE_PYTHON3:-""}
+
 # Set this to enable remote logging of the console via UDP packets to
 # a specified ipv4 ip:port (note; not hostname -- ip address only).
 # This can be extremely useful if a host is oopsing or dropping off
@@ -481,7 +493,7 @@ sudo -H pip install virtualenv
 virtualenv /tmp/ansible
 # NOTE(emilien): workaround to avoid installing cryptography
 # https://github.com/ansible/ansible/issues/15665
-/tmp/ansible/bin/pip install paramiko==1.16.0 ansible==$ANSIBLE_VERSION
+/tmp/ansible/bin/pip install paramiko==1.16.0 ansible==$ANSIBLE_VERSION ara
 export ANSIBLE=/tmp/ansible/bin/ansible
 export ANSIBLE_PLAYBOOK=/tmp/ansible/bin/ansible-playbook
 
@@ -499,7 +511,7 @@ done
 # Write ansible config file
 cat > "$WORKSPACE/ansible.cfg" <<EOF
 [defaults]
-callback_plugins = $WORKSPACE/devstack-gate/playbooks/plugins/callback
+callback_plugins = $WORKSPACE/devstack-gate/playbooks/plugins/callback:/tmp/ansible/lib/python2.7/site-packages/ara/plugins/callbacks
 stdout_callback = devstack
 EOF
 
@@ -652,5 +664,8 @@ $ANSIBLE all -f 5 -i "$WORKSPACE/inventory" -m shell \
 $ANSIBLE subnodes -f 5 -i "$WORKSPACE/inventory" -m synchronize \
     -a "mode=pull src='$BASE/logs/' dest='$BASE/logs/subnode-{{ host_counter }}' copy_links=yes"
 sudo mv $WORKSPACE/devstack-gate-cleanup-host.txt $BASE/logs/
+
+# Generate ARA report
+/tmp/ansible/bin/ara generate $BASE/logs/ara
 
 exit $RETVAL

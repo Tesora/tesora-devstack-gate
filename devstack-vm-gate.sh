@@ -229,6 +229,22 @@ function setup_networking {
     fi
 }
 
+# Discovers compute nodes (subnodes) and maps them to cells.
+# NOTE(mriedem): We want to remove this if/when nova supports auto-registration
+# of computes with cells, but that's not happening in Ocata.
+function discover_hosts {
+    # We have to run this on the primary node AFTER the subnodes have been
+    # setup. Since discover_hosts is really only needed for Ocata, this checks
+    # to see if the script exists in the devstack installation first.
+    # NOTE(danms): This is ||'d with an assertion that the script does not exist,
+    # so that if we actually failed the script, we'll exit nonzero here instead
+    # of ignoring failures along with the case where there is no script.
+    # TODO(mriedem): Would be nice to do this with wrapped lines.
+    $ANSIBLE primary -f 5 -i "$WORKSPACE/inventory" -m shell \
+        -a "cd $BASE/new/devstack/ && (test -f tools/discover_hosts.sh && sudo -H -u stack DSTOOLS_VERSION=$DSTOOLS_VERSION stdbuf -oL -eL ./tools/discover_hosts.sh) || (! test -f tools/discover_hosts.sh)" \
+        &> "$WORKSPACE/logs/devstack-gate-discover-hosts.txt"
+}
+
 function setup_localrc {
     local localrc_oldnew=$1;
     local localrc_file=$2
@@ -260,39 +276,25 @@ function setup_localrc {
                 sudo yum install -y PyYAML
             fi
         fi
-        MY_ENABLED_SERVICES=`cd $BASE/new/devstack-gate && ./test-matrix.py -b $branch_for_matrix -f $DEVSTACK_GATE_FEATURE_MATRIX`
-        local original_enabled_services=$MY_ENABLED_SERVICES
 
-        # TODO(afazekas): Move to the feature grid
+        local test_matrix_role='primary'
         if [[ $role = sub ]]; then
-            MY_ENABLED_SERVICES="n-cpu,ceilometer-acompute,dstat"
-            if [[ "$original_enabled_services" =~ "c-api" ]]; then
-                MY_ENABLED_SERVICES+=",c-vol,c-bak"
-            fi
-            if [[ "$original_enabled_services" =~ "tls-proxy" ]]; then
-                MY_ENABLED_SERVICES+=",tls-proxy"
-            fi
-            if [[ "$DEVSTACK_GATE_NEUTRON" -eq "1" ]]; then
-                MY_ENABLED_SERVICES+=",q-agt"
-                if [[ "$DEVSTACK_GATE_NEUTRON_DVR" -eq "1" ]]; then
-                    # As per reference architecture described in
-                    # https://wiki.openstack.org/wiki/Neutron/DVR
-                    # for DVR multi-node, add the following services
-                    # on all compute nodes:
-                    MY_ENABLED_SERVICES+=",q-l3,q-meta"
-                fi
-            else
-                MY_ENABLED_SERVICES+=",n-net,n-api-meta"
-            fi
-            if [[ "$DEVSTACK_GATE_IRONIC" -eq "1" ]]; then
-                MY_ENABLED_SERVICES+=",ir-api,ir-cond"
-            fi
+            test_matrix_role='subnode'
         fi
+
+        MY_ENABLED_SERVICES=$(cd $BASE/new/devstack-gate && ./test-matrix.py -b $branch_for_matrix -f $DEVSTACK_GATE_FEATURE_MATRIX -r $test_matrix_role)
+        local original_enabled_services=$(cd $BASE/new/devstack-gate && ./test-matrix.py -b $branch_for_matrix -f $DEVSTACK_GATE_FEATURE_MATRIX -r primary)
+        echo "MY_ENABLED_SERVICES: ${MY_ENABLED_SERVICES}"
+        echo "original_enabled_services: ${original_enabled_services}"
 
         # Allow optional injection of ENABLED_SERVICES from the calling context
         if [[ ! -z $ENABLED_SERVICES ]] ; then
             MY_ENABLED_SERVICES+=,$ENABLED_SERVICES
         fi
+    fi
+
+    if [[ ! -z $DEVSTACK_GATE_USE_PYTHON3 ]] ; then
+        echo "USE_PYTHON3=$DEVSTACK_GATE_USE_PYTHON3" >>"$localrc_file"
     fi
 
     if [[ "$DEVSTACK_GATE_CEPH" == "1" ]]; then
@@ -341,6 +343,8 @@ ROOTSLEEP=0
 # to correctly do testing. Otherwise you are not testing
 # the code you have posted for review.
 ERROR_ON_CLONE=True
+# Since git clone can't be used for novnc in gates, force it to install the packages
+NOVNC_FROM_PACKAGE=True
 ENABLED_SERVICES=$MY_ENABLED_SERVICES
 SKIP_EXERCISES=$SKIP_EXERCISES
 # Screen console logs will capture service logs.
@@ -388,14 +392,6 @@ EOF
         if [[ -n "$DEVSTACK_GATE_LIBVIRT_TYPE" ]]; then
             echo "LIBVIRT_TYPE=${DEVSTACK_GATE_LIBVIRT_TYPE}" >>localrc
         fi
-    fi
-
-    if [[ "$DEVSTACK_GATE_VIRT_DRIVER" == "openvz" ]]; then
-        echo "SKIP_EXERCISES=${SKIP_EXERCISES},volumes" >>"$localrc_file"
-        echo "DEFAULT_INSTANCE_TYPE=m1.small" >>"$localrc_file"
-        echo "DEFAULT_INSTANCE_USER=root" >>"$localrc_file"
-        echo "DEFAULT_INSTANCE_TYPE=m1.small" >>exerciserc
-        echo "DEFAULT_INSTANCE_USER=root" >>exerciserc
     fi
 
     if [[ "$DEVSTACK_GATE_VIRT_DRIVER" == "ironic" ]]; then
@@ -596,6 +592,19 @@ EOF
 
 }
 
+# This makes the stack user own the $BASE files and also changes the
+# permissions on the logs directory so we can write to the logs when running
+# devstack or grenade. This must be called AFTER setup_localrc.
+function setup_access_for_stack_user {
+    # Make the workspace owned by the stack user
+    # It is not clear if the ansible file module can do this for us
+    $ANSIBLE all --sudo -f 5 -i "$WORKSPACE/inventory" -m shell \
+        -a "chown -R stack:stack '$BASE'"
+    # allow us to add logs
+    $ANSIBLE all --sudo -f 5 -i "$WORKSPACE/inventory" -m shell \
+        -a "chmod 777 '$WORKSPACE/logs'"
+}
+
 if [[ -n "$DEVSTACK_GATE_GRENADE" ]]; then
     cd $BASE/old/devstack
     setup_localrc "old" "localrc" "primary"
@@ -651,15 +660,12 @@ EOF
 
     setup_networking "grenade"
 
-    # Make the workspace owned by the stack user
-    # It is not clear if the ansible file module can do this for us
-    $ANSIBLE all --sudo -f 5 -i "$WORKSPACE/inventory" -m shell \
-        -a "chown -R stack:stack '$BASE'"
+    setup_access_for_stack_user
 
     echo "Running grenade ..."
     echo "This takes a good 30 minutes or more"
     cd $BASE/new/grenade
-    sudo -H -u stack stdbuf -oL -eL ./grenade.sh
+    sudo -H -u stack DSTOOLS_VERSION=$DSTOOLS_VERSION stdbuf -oL -eL ./grenade.sh
     cd $BASE/new/devstack
 
 else
@@ -675,19 +681,13 @@ else
 
     setup_networking
 
-    # Make the workspace owned by the stack user
-    # It is not clear if the ansible file module can do this for us
-    $ANSIBLE all --sudo -f 5 -i "$WORKSPACE/inventory" -m shell \
-        -a "chown -R stack:stack '$BASE'"
-    # allow us to add logs
-    $ANSIBLE all --sudo -f 5 -i "$WORKSPACE/inventory" -m shell \
-        -a "chmod 777 '$WORKSPACE/logs'"
+    setup_access_for_stack_user
 
     echo "Running devstack"
     echo "... this takes 10 - 15 minutes (logs in logs/devstacklog.txt.gz)"
     start=$(date +%s)
     $ANSIBLE primary -f 5 -i "$WORKSPACE/inventory" -m shell \
-        -a "cd '$BASE/new/devstack' && sudo -H -u stack stdbuf -oL -eL ./stack.sh executable=/bin/bash" \
+        -a "cd '$BASE/new/devstack' && sudo -H -u stack DSTOOLS_VERSION=$DSTOOLS_VERSION stdbuf -oL -eL ./stack.sh executable=/bin/bash" \
         &> "$WORKSPACE/logs/devstack-early.txt"
     if [ -d "$BASE/data/CA" ] && [ -f "$BASE/data/ca-bundle.pem" ] ; then
         # Sync any data files which include certificates to be used if
@@ -707,13 +707,16 @@ else
     # because services like nova apparently expect to have the controller in
     # place before anything else.
     $ANSIBLE subnodes -f 5 -i "$WORKSPACE/inventory" -m shell \
-        -a "cd '$BASE/new/devstack' && sudo -H -u stack stdbuf -oL -eL ./stack.sh executable=/bin/bash" \
+        -a "cd '$BASE/new/devstack' && sudo -H -u stack DSTOOLS_VERSION=$DSTOOLS_VERSION stdbuf -oL -eL ./stack.sh executable=/bin/bash" \
         &> "$WORKSPACE/logs/devstack-subnodes-early.txt"
     end=$(date +%s)
     took=$((($end - $start) / 60))
     if [[ "$took" -gt 20 ]]; then
         echo "WARNING: devstack run took > 20 minutes, this is a very slow node."
     fi
+
+    # Discover the hosts on a cells v2 deployment.
+    discover_hosts
 
     # provide a check that the right db was running
     # the path are different for fedora and red hat.
@@ -754,28 +757,7 @@ if [[ "$DEVSTACK_GATE_EXERCISES" -eq "1" ]]; then
         -a "cd '$BASE/new/devstack' && sudo -H -u stack ./exercise.sh"
 fi
 
-function load_subunit_stream {
-    local stream=$1;
-    pushd $BASE/new/tempest/
-    sudo testr load --force-init $stream
-    popd
-}
-
-
 if [[ "$DEVSTACK_GATE_TEMPEST" -eq "1" ]]; then
-    #TODO(mtreinish): This if block can be removed after all the nodepool images
-    # are built using with streams dir instead
-    echo "Loading previous tempest runs subunit streams into testr"
-    if [[ -f /opt/git/openstack/tempest/.testrepository/0 ]]; then
-        temp_stream=`mktemp`
-        subunit-1to2 /opt/git/openstack/tempest/.testrepository/0 > $temp_stream
-        load_subunit_stream $temp_stream
-    elif [[ -d /opt/git/openstack/tempest/preseed-streams ]]; then
-        for stream in /opt/git/openstack/tempest/preseed-streams/* ; do
-            load_subunit_stream $stream
-        done
-    fi
-
     # under tempest isolation tempest will need to write .tox dir, log files
     if [[ -d "$BASE/new/tempest" ]]; then
         sudo chown -R tempest:stack $BASE/new/tempest

@@ -130,13 +130,17 @@ function network_sanity_check {
         _http_check $pypi_url
     fi
 
-    # AFS ubuntu mirror
-    source /etc/nodepool/provider
-    NODEPOOL_MIRROR_HOST=${NODEPOOL_MIRROR_HOST:-mirror.$NODEPOOL_REGION.$NODEPOOL_CLOUD.openstack.org}
-    NODEPOOL_MIRROR_HOST=$(echo $NODEPOOL_MIRROR_HOST|tr '[:upper:]' '[:lower:]')
+    if [[ -f /etc/nodepool/provider ]]; then
+        # AFS ubuntu mirror
+        source /etc/nodepool/provider
+        if [[ -n "$NODEPOOL_MIRROR_HOST" || ( -n "$NODEPOOL_REGION" && -n "$NODEPOOL_CLOUD" ) ]]; then
+            NODEPOOL_MIRROR_HOST=${NODEPOOL_MIRROR_HOST:-mirror.$NODEPOOL_REGION.$NODEPOOL_CLOUD.openstack.org}
+            NODEPOOL_MIRROR_HOST=$(echo $NODEPOOL_MIRROR_HOST|tr '[:upper:]' '[:lower:]')
 
-    _ping_check $NODEPOOL_MIRROR_HOST
-    _http_check http://$NODEPOOL_MIRROR_HOST/ubuntu/dists/trusty/Release
+            _ping_check $NODEPOOL_MIRROR_HOST
+            _http_check http://$NODEPOOL_MIRROR_HOST/ubuntu/dists/trusty/Release
+        fi
+    fi
 }
 
 # create the start timer for when the job began
@@ -165,7 +169,7 @@ function start_timer {
 function remaining_time {
     local now=`date +%s`
     local elapsed=$(((now - START_TIME) / 60))
-    REMAINING_TIME=$((DEVSTACK_GATE_TIMEOUT - elapsed - 5))
+    export REMAINING_TIME=$((DEVSTACK_GATE_TIMEOUT - elapsed - 5))
     echo "Job timeout set to: $REMAINING_TIME minutes"
     if [ ${REMAINING_TIME} -le 0 ]; then
         echo "Already timed out."
@@ -189,8 +193,8 @@ function reproduce {
 #   Note we can and do run devstack-gate on other distros double check
 #   where your job ran (will be recorded in console.html) to reproduce
 #   as accurately as possible.
-# - Must have python-all-dev, build-essential, git, libssl-dev installed
-#   from apt, or their equivalents on other distros.
+# - Must have python-all-dev, build-essential, git, libssl-dev, ntp, ntpdate
+#   installed from apt, or their equivalents on other distros.
 # - Must have virtualenv installed from pip
 # - Must be run as root
 #
@@ -392,18 +396,6 @@ function git_clone_and_cd {
         esac
     fi
     cd $short_project
-}
-
-function fix_etc_hosts {
-    # HPcloud stopped adding the hostname to /etc/hosts with their
-    # precise images.
-
-    HOSTNAME=`/bin/hostname`
-    if ! grep $HOSTNAME /etc/hosts >/dev/null; then
-        echo "Need to add hostname to /etc/hosts"
-        sudo bash -c 'echo "127.0.1.1 $HOSTNAME" >>/etc/hosts'
-    fi
-
 }
 
 function fix_disk_layout {
@@ -703,71 +695,6 @@ function setup_host {
     local xtrace=$(set +o | grep xtrace)
     set -o xtrace
 
-    # This is necessary to keep sudo from complaining
-    fix_etc_hosts
-
-    # We set some home directories under $BASE, make sure it exists.
-    sudo mkdir -p $BASE
-
-    # Start with a fresh syslog
-    if which journalctl ; then
-        # save timestamp and use journalctl to dump everything since
-        # then at the end
-        date +"%Y-%m-%d %H:%M:%S" | sudo tee $BASE/log-start-timestamp.txt
-    else
-        # Assume rsyslog, move old logs aside then restart the service.
-        sudo stop rsyslog
-        sudo mv /var/log/syslog /var/log/syslog-pre-devstack
-        sudo mv /var/log/kern.log /var/log/kern_log-pre-devstack
-        sudo touch /var/log/syslog
-        sudo chown /var/log/syslog --ref /var/log/syslog-pre-devstack
-        sudo chmod /var/log/syslog --ref /var/log/syslog-pre-devstack
-        sudo chmod a+r /var/log/syslog
-        sudo touch /var/log/kern.log
-        sudo chown /var/log/kern.log --ref /var/log/kern_log-pre-devstack
-        sudo chmod /var/log/kern.log --ref /var/log/kern_log-pre-devstack
-        sudo chmod a+r /var/log/kern.log
-        sudo start rsyslog
-    fi
-
-    # Create a stack user for devstack to run as, so that we can
-    # revoke sudo permissions from that user when appropriate.
-    sudo useradd -U -s /bin/bash -d $BASE/new -m stack
-    # Use 755 mode on the user dir regardless of the /etc/login.defs setting
-    sudo chmod 755 $BASE/new
-    TEMPFILE=`mktemp`
-    echo "stack ALL=(root) NOPASSWD:ALL" >$TEMPFILE
-    chmod 0440 $TEMPFILE
-    sudo chown root:root $TEMPFILE
-    sudo mv $TEMPFILE /etc/sudoers.d/50_stack_sh
-
-    # Create user's ~/.cache directory with proper permissions, ensuring later
-    # 'sudo pip install's do not create it owned by root.
-    sudo mkdir -p $BASE/new/.cache
-    sudo chown -R stack:stack $BASE/new/.cache
-
-    # Create a tempest user for tempest to run as, so that we can
-    # revoke sudo permissions from that user when appropriate.
-    # NOTE(sdague): we should try to get the state dump to be a
-    # neutron API call in Icehouse to remove this.
-    sudo useradd -U -s /bin/bash -m tempest
-    TEMPFILE=`mktemp`
-    echo "tempest ALL=(root) NOPASSWD:/sbin/ip" >$TEMPFILE
-    echo "tempest ALL=(root) NOPASSWD:/sbin/iptables" >>$TEMPFILE
-    echo "tempest ALL=(root) NOPASSWD:/usr/bin/ovsdb-client" >>$TEMPFILE
-    chmod 0440 $TEMPFILE
-    sudo chown root:root $TEMPFILE
-    sudo mv $TEMPFILE /etc/sudoers.d/51_tempest_sh
-
-    # Future useradd calls should strongly consider also updating
-    # ~/.pydisutils.cfg in the copy_mirror_config
-    # function if tox/pip will be used at all.
-
-    # If we will be testing OpenVZ, make sure stack is a member of the vz group
-    if [ "$DEVSTACK_GATE_VIRT_DRIVER" == "openvz" ]; then
-        sudo usermod -a -G vz stack
-    fi
-
     # Ensure that all of the users have the openstack mirror config
     copy_mirror_config
 
@@ -857,6 +784,30 @@ function process_stackviz {
     fi
 }
 
+function save_file {
+    local from=$1
+    local to=$2
+    if [[ -z "$to" ]]; then
+        to=$(basename $from)
+        if [[ "$to" != *.txt ]]; then
+            to=${to/\./_}
+            to="$to.txt"
+        fi
+    fi
+    if [[ -f $from ]]; then
+        sudo cp $from $BASE/logs/$to
+    fi
+}
+
+function save_dir {
+    local from=$1
+    local to=$2
+    if [[ -d $from ]]; then
+        sudo cp -r $from $BASE/logs/$to
+    fi
+}
+
+
 function cleanup_host {
     # TODO: clean this up to be errexit clean
     local errexit=$(set +o | grep errexit)
@@ -880,8 +831,8 @@ function cleanup_host {
             | sudo tee $BASE/logs/syslog.txt > /dev/null
     else
         # assume rsyslog
-        sudo cp /var/log/syslog $BASE/logs/syslog.txt
-        sudo cp /var/log/kern.log $BASE/logs/kern_log.txt
+        save_file /var/log/syslog
+        save_file /var/log/kern.log
     fi
 
     # apache logs; including wsgi stuff like horizon, keystone, etc.
@@ -893,9 +844,7 @@ function cleanup_host {
     sudo cp -r ${apache_logs} $BASE/logs/apache
 
     # rabbitmq logs
-    if [ -d /var/log/rabbitmq ]; then
-        sudo cp -r /var/log/rabbitmq $BASE/logs
-    fi
+    save_dir /var/log/rabbitmq
 
     # db logs
     if [ -d /var/log/postgresql ] ; then
@@ -903,22 +852,15 @@ function cleanup_host {
         # deleted
         sudo cp /var/log/postgresql/*log $BASE/logs/postgres.log
     fi
-    if [ -f /var/log/mysql.err ] ; then
-        sudo cp /var/log/mysql.err $BASE/logs/mysql_err.log
-    fi
-    if [ -f /var/log/mysql.log ] ; then
-        sudo cp /var/log/mysql.log $BASE/logs/
-    fi
+    save_file /var/log/mysql.err
+    save_file /var/log/mysql.log
 
     # libvirt
-    if [ -d /var/log/libvirt ] ; then
-        sudo cp -r /var/log/libvirt $BASE/logs/
-        sudo cp -r /usr/share/libvirt/cpu_map.xml $BASE/logs/libvirt/cpu_map.xml
-    fi
+    save_dir /var/log/libvirt
 
     # sudo config
-    sudo cp -r /etc/sudoers.d $BASE/logs/
-    sudo cp /etc/sudoers $BASE/logs/sudoers.txt
+    save_dir /etc/sudoers.d
+    save_file /etc/sudoers
 
     # Archive config files
     # NOTE(mriedem): 'openstack' is added separately since it's not a project
@@ -926,9 +868,7 @@ function cleanup_host {
     sudo mkdir $BASE/logs/etc/
     for PROJECT in $PROJECTS openstack; do
         proj=`basename $PROJECT`
-        if [ -d /etc/$proj ]; then
-            sudo cp -r /etc/$proj $BASE/logs/etc/
-        fi
+        save_dir /etc/$proj etc/
     done
 
     # Archive Apache config files
@@ -953,13 +893,12 @@ function cleanup_host {
         # avoid excessively long file-names.
         find $BASE/old/screen-logs -type l -print0 | \
             xargs -0 -I {} sudo cp {} $BASE/logs/old
-        sudo cp $BASE/old/devstacklog.txt $BASE/logs/old/
-        sudo cp $BASE/old/devstacklog.txt.summary $BASE/logs/old/devstacklog.summary.txt
-        sudo cp $BASE/old/devstack/localrc $BASE/logs/old/localrc.txt
-        sudo cp $BASE/old/tempest/etc/tempest.conf $BASE/logs/old/tempest_conf.txt
-        if [ -f $BASE/old/devstack/tempest.log ] ; then
-            sudo cp $BASE/old/devstack/tempest.log $BASE/logs/old/verify_tempest_conf.log
-        fi
+        save_file $BASE/old/devstacklog.txt old/devstacklog.txt
+        save_file $BASE/old/devstacklog.txt.summary old/devstacklog.summary.txt
+        save_file $BASE/old/devstack/localrc old/localrc.txt
+        save_file $BASE/old/devstack/local.conf old/local_conf.txt
+        save_file $BASE/old/tempest/etc/tempest.conf old/tempest_conf.txt
+        save_file $BASE/old/devstack/tempest.log old/verify_tempest_conf.log
 
         # Copy Ironic nodes console logs if they exist
         if [ -d $BASE/old/ironic-bm-logs ] ; then
@@ -968,12 +907,10 @@ function cleanup_host {
         fi
 
         # dstat CSV log
-        if [ -f $BASE/old/dstat-csv.log ]; then
-            sudo cp $BASE/old/dstat-csv.log $BASE/logs/old/
-        fi
+        save_file $BASE/old/dstat-csv.log old/
 
         # grenade logs
-        sudo cp $BASE/new/grenade/localrc $BASE/logs/grenade_localrc.txt
+        save_file $BASE/new/grenade/localrc grenade_localrc.txt
 
         # grenade saved state files - resources created during upgrade tests
         # use this directory to dump arbitrary configuration/state files.
@@ -984,9 +921,7 @@ function cleanup_host {
 
         # grenade pluginrc - external grenade plugins use this file to
         # communicate with grenade, capture for posterity
-        if -f [ $BASE/new/grenade/pluginrc ]; then
-            sudo cp $BASE/new/grenade/pluginrc $BASE/logs/grenade_pluginrc.txt
-        fi
+        save_file $BASE/new/grenade/pluginrc grenade_pluginrc.txt
 
         # grenade logs directly and uses similar timestampped files to
         # devstack.  So temporarily copy out & rename the latest log
@@ -994,28 +929,26 @@ function cleanup_host {
         # over time-stampped files and put the interesting logs back at
         # top-level for easy access
         sudo mkdir -p $BASE/logs/grenade
-        sudo cp $BASE/logs/grenade.sh.log $BASE/logs/grenade/
-        sudo cp $BASE/logs/grenade.sh.log.summary \
-            $BASE/logs/grenade/grenade.sh.summary.log
+        save_file $BASE/logs/grenade.sh.log grenade/grenade.sh.log
+        save_file $BASE/logs/grenade.sh.log.summary \
+            grenade/grenade.sh.summary.log
         sudo rm $BASE/logs/grenade.sh.*
         sudo mv $BASE/logs/grenade/*.log $BASE/logs
         sudo rm -rf $BASE/logs/grenade
-        if [ -f $BASE/new/grenade/javelin.log ] ; then
-            sudo cp $BASE/new/grenade/javelin.log $BASE/logs/javelin.log
-        fi
+        save_file $BASE/new/grenade/javelin.log javelin.log
 
-        NEWLOGTARGET=$BASE/logs/new
+        NEWLOGPREFIX=new/
     else
-        NEWLOGTARGET=$BASE/logs
+        NEWLOGPREFIX=
     fi
+    NEWLOGTARGET=$BASE/logs/$NEWLOGPREFIX
     find $BASE/new/screen-logs -type l -print0 | \
         xargs -0 -I {} sudo cp {} $NEWLOGTARGET/
-    sudo cp $BASE/new/devstacklog.txt $NEWLOGTARGET/
-    sudo cp $BASE/new/devstacklog.txt.summary $NEWLOGTARGET/devstacklog.summary.txt
-    sudo cp $BASE/new/devstack/localrc $NEWLOGTARGET/localrc.txt
-    if [ -f $BASE/new/devstack/tempest.log ]; then
-        sudo cp $BASE/new/devstack/tempest.log $NEWLOGTARGET/verify_tempest_conf.log
-    fi
+    save_file $BASE/new/devstacklog.txt ${NEWLOGPREFIX}devstacklog.txt
+    save_file $BASE/new/devstacklog.txt.summary ${NEWLOGPREFIX}devstacklog.summary.txt
+    save_file $BASE/new/devstack/localrc ${NEWLOGPREFIX}localrc.txt
+    save_file $BASE/new/devstack/local.conf ${NEWLOGPREFIX}local.conf.txt
+    save_file $BASE/new/devstack/tempest.log ${NEWLOGPREFIX}verify_tempest_conf.log
 
     # Copy failure files if they exist
     if [ $(ls $BASE/status/stack/*.failure | wc -l) -gt 0 ]; then
@@ -1030,24 +963,21 @@ function cleanup_host {
     fi
 
     # Copy tempest config file
-    sudo cp $BASE/new/tempest/etc/tempest.conf $NEWLOGTARGET/tempest_conf.txt
-    if [ -f $BASE/new/tempest/etc/accounts.yaml ] ; then
-        sudo cp $BASE/new/tempest/etc/accounts.yaml $NEWLOGTARGET/accounts_yaml.txt
-    fi
+    save_file $BASE/new/tempest/etc/tempest.conf ${NEWLOGPREFIX}tempest_conf.txt
+    save_file $BASE/new/tempest/etc/accounts.yaml ${NEWLOGPREFIX}accounts_yaml.txt
 
     # Copy dstat CSV log if it exists
-    if [ -f $BASE/new/dstat-csv.log ]; then
-        sudo cp $BASE/new/dstat-csv.log $BASE/logs/
-    fi
+    save_file $BASE/new/dstat-csv.log
 
     sudo iptables-save > $WORKSPACE/iptables.txt
     df -h > $WORKSPACE/df.txt
-    sudo mv $WORKSPACE/iptables.txt $WORKSPACE/df.txt $BASE/logs/
+    save_file $WORKSPACE/iptables.txt
+    save_file $WORKSPACE/df.txt
 
     for py_ver in 2 3; do
         if [[ `which python${py_ver}` ]]; then
             python${py_ver} -m pip freeze > $WORKSPACE/pip${py_ver}-freeze.txt
-            sudo mv $WORKSPACE/pip${py_ver}-freeze.txt $BASE/logs/
+            save_file $WORKSPACE/pip${py_ver}-freeze.txt
         fi
     done
 
@@ -1057,7 +987,7 @@ function cleanup_host {
         sudo mv $WORKSPACE/dpkg-l.txt.gz $BASE/logs/
     fi
     if [ `command -v rpm` ]; then
-        rpm -qa > $WORKSPACE/rpm-qa.txt
+        rpm -qa | sort > $WORKSPACE/rpm-qa.txt
         gzip -9 rpm-qa.txt
         sudo mv $WORKSPACE/rpm-qa.txt.gz $BASE/logs/
     fi
@@ -1067,20 +997,14 @@ function cleanup_host {
     process_testr_artifacts tempest
     process_testr_artifacts tempest old
 
-    if [ -f $BASE/new/tempest/tempest.log ] ; then
-        sudo cp $BASE/new/tempest/tempest.log $BASE/logs/tempest.log
-    fi
-    if [ -f $BASE/old/tempest/tempest.log ] ; then
-        sudo cp $BASE/old/tempest/tempest.log $BASE/logs/old/tempest.log
-    fi
+    save_file $BASE/new/tempest/tempest.log tempest.log
+    save_file $BASE/old/tempest/tempest.log old/tempest.log
 
     # ceph logs and config
     if [ -d /var/log/ceph ] ; then
         sudo cp -r /var/log/ceph $BASE/logs/
     fi
-    if [ -f /etc/ceph/ceph.conf ] ; then
-        sudo cp /etc/ceph/ceph.conf $BASE/logs/ceph_conf.txt
-    fi
+    save_file /etc/ceph/ceph.conf
 
     if [ -d /var/log/openvswitch ] ; then
         sudo cp -r /var/log/openvswitch $BASE/logs/
@@ -1090,9 +1014,7 @@ function cleanup_host {
     if [ -d /var/log/glusterfs ] ; then
         sudo cp -r /var/log/glusterfs $BASE/logs/
     fi
-    if [ -f /etc/glusterfs/glusterd.vol ] ; then
-        sudo cp /etc/glusterfs/glusterd.vol $BASE/logs/
-    fi
+    save_file /etc/glusterfs/glusterd.vol glusterd.vol
 
     # Make sure the current user can read all the logs and configs
     sudo chown -RL $USER:$USER $BASE/logs/

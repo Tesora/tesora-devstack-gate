@@ -75,22 +75,24 @@ def configs_from_env():
     return configs
 
 
-def calc_services(branch, features):
+def calc_services(branch, features, role):
     services = set()
     for feature in features:
-        services.update(GRID['features'][feature]['base'].get('services', []))
-        if branch in GRID['features'][feature]:
+        grid_feature = GRID[role][feature]
+        services.update(grid_feature['base'].get('services', []))
+        if branch in grid_feature:
             services.update(
-                GRID['features'][feature][branch].get('services', []))
+                grid_feature[branch].get('services', []))
 
     # deletes always trump adds
     for feature in features:
+        grid_feature = GRID[role][feature]
         services.difference_update(
-            GRID['features'][feature]['base'].get('rm-services', []))
+            grid_feature['base'].get('rm-services', []))
 
-        if branch in GRID['features'][feature]:
+        if branch in grid_feature:
             services.difference_update(
-                GRID['features'][feature][branch].get('rm-services', []))
+                grid_feature[branch].get('rm-services', []))
     return sorted(list(services))
 
 
@@ -129,6 +131,10 @@ of environmental feature definitions and flags.
     parser.add_argument('-m', '--mode',
                         default="services",
                         help="What to return (services, compute-ext)")
+    parser.add_argument('-r', '--role',
+                        default='primary',
+                        help="What role this node will have",
+                        choices=['primary', 'subnode'])
     return parser.parse_args()
 
 
@@ -139,11 +145,12 @@ def main():
     GRID = parse_features(opts.features)
     ALLOWED_BRANCHES = GRID['branches']['allowed']
     branch = normalize_branch(opts.branch)
+    role = opts.role
 
     features = calc_features(branch, configs_from_env())
     LOG.debug("Features: %s " % features)
 
-    services = calc_services(branch, features)
+    services = calc_services(branch, features, role)
     LOG.debug("Services: %s " % services)
 
     if opts.mode == "services":

@@ -201,7 +201,8 @@ export DEVSTACK_CINDER_VOLUME_CLEAR=${DEVSTACK_CINDER_VOLUME_CLEAR:-none}
 # single-branch checkouts; not used for grenade)
 export OVERRIDE_ZUUL_BRANCH=${OVERRIDE_ZUUL_BRANCH:-$ZUUL_BRANCH}
 
-stable_compare="stable/[a-n]"
+# branches that run NEUTRON=0
+stable_compare="dev/(EE-1.9|EE-1.9-SP)"
 
 # Set to 1 to run neutron instead of nova network
 # This is a bit complicated to handle the deprecation of nova net across
